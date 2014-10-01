@@ -101,7 +101,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			}
 			try {
 				SeleneseTestCase testCase = parse(xml, context);
-				run(testCase);
+				run(testCase, context);
 			}
 			catch (IOException e) {
 				throw new EvaluationException(e);
@@ -132,16 +132,21 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return new RemoteWebDriver(url, capabilities);
 		}
 		
-		private void run(SeleneseTestCase testCase) throws EvaluationException, IOException {
+		private void run(SeleneseTestCase testCase, ExecutionContext context) throws EvaluationException, IOException {
 			WebDriver driver = getFirefoxDriver();
 			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
 			SeleneseStep previousStep = null;
 			for (SeleneseStep step : testCase.getSteps()) {
-				ScriptRuntime.getRuntime().log("Step " + step.getAction());
+				String message = step.getAction();
+				if (step.getTarget() != null && !step.getTarget().isEmpty()) {
+					message += " @ " + step.getTarget();
+				}
+				if (step.getContent() != null && !step.getContent().isEmpty()) {
+					message += ": " + step.getContent();
+				}
+				ScriptRuntime.getRuntime().log(message);
 				if (step.getAction().equalsIgnoreCase("open")) {
-					String url = step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget();
-					ScriptRuntime.getRuntime().log("\tURL: " + url);					
-					driver.get(url);
+					driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
 				}
 				else if (step.getAction().equalsIgnoreCase("waitForTextPresent")) {
 					while (!Thread.interrupted()) {
@@ -271,6 +276,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 						else {
 							element.sendKeys(step.getContent());
 						}
+					}
+					else if (step.getAction().equalsIgnoreCase("store")) {
+						context.set(step.getContent(), element.getText());
 					}
 					else if (step.getAction().equalsIgnoreCase("doubleClick")) {
 						Actions action = new Actions(driver);
