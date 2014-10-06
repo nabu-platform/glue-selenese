@@ -51,7 +51,6 @@ import be.nabu.libs.evaluator.EvaluationException;
 import be.nabu.libs.evaluator.api.Operation;
 import be.nabu.libs.evaluator.api.OperationProvider.OperationType;
 import be.nabu.libs.evaluator.base.BaseOperation;
-import be.nabu.utils.io.IOUtils;
 
 public class SeleneseMethodProvider implements MethodProvider {
 	
@@ -313,7 +312,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			InputStream xml = null;
 			try {
 				while (runtime != null) {
-					xml = IOUtils.toInputStream(ScriptRuntime.getRuntime().getExecutionContext().getContent(name));
+					xml = ScriptRuntime.getRuntime().getExecutionContext().getContent(name);
 					if (xml != null) {
 						break;
 					}
