@@ -43,11 +43,15 @@ import org.openqa.selenium.support.ui.WebDriverWait;
 
 import be.nabu.glue.ScriptRuntime;
 import be.nabu.glue.api.ExecutionContext;
+import be.nabu.glue.api.MethodDescription;
 import be.nabu.glue.api.MethodProvider;
+import be.nabu.glue.impl.SimpleMethodDescription;
+import be.nabu.glue.impl.SimpleParameterDescription;
 import be.nabu.libs.evaluator.EvaluationException;
 import be.nabu.libs.evaluator.api.Operation;
 import be.nabu.libs.evaluator.api.OperationProvider.OperationType;
 import be.nabu.libs.evaluator.base.BaseOperation;
+import be.nabu.utils.io.IOUtils;
 
 public class SeleneseMethodProvider implements MethodProvider {
 	
@@ -278,7 +282,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 					}
 					else if (step.getAction().equalsIgnoreCase("store")) {
-						context.set(step.getContent(), element.getText());
+						context.getPipeline().put(step.getContent(), element.getText());
 					}
 					else if (step.getAction().equalsIgnoreCase("doubleClick")) {
 						Actions action = new Actions(driver);
@@ -309,7 +313,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			InputStream xml = null;
 			try {
 				while (runtime != null) {
-					xml = ScriptRuntime.getRuntime().getExecutionContext().getContent(name);
+					xml = IOUtils.toInputStream(ScriptRuntime.getRuntime().getExecutionContext().getContent(name));
 					if (xml != null) {
 						break;
 					}
@@ -333,9 +337,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 				}
 				ByteArrayOutputStream output = new ByteArrayOutputStream();
 				transform(xml, xsl, output);
-				Charset charset = ScriptRuntime.getRuntime().getScript().getRepository().getCharset();
+				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				String string = new String(output.toByteArray(), charset);
-				string = ScriptRuntime.getRuntime().getScript().getParser().replace(string, context);
+				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context);
 				System.out.println(string);
 				JAXBContext jaxb = JAXBContext.newInstance(SeleneseTestCase.class);
 				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(string.getBytes(charset))));
@@ -410,5 +414,13 @@ public class SeleneseMethodProvider implements MethodProvider {
 			this.content = content;
 		}
 		
+	}
+
+	@Override
+	public List<MethodDescription> getAvailableMethods() {
+		List<MethodDescription> descriptions = new ArrayList<MethodDescription>();
+		descriptions.add(new SimpleMethodDescription("selenese", "This will run a selenese script created using the selenium IDE",
+				new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream")));
+		return descriptions;
 	}
 }
