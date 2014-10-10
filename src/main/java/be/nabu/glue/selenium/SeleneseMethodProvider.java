@@ -48,6 +48,8 @@ import be.nabu.glue.api.MethodProvider;
 import be.nabu.glue.impl.SimpleMethodDescription;
 import be.nabu.glue.impl.SimpleParameterDescription;
 import be.nabu.libs.evaluator.EvaluationException;
+import be.nabu.libs.evaluator.QueryPart;
+import be.nabu.libs.evaluator.QueryPart.Type;
 import be.nabu.libs.evaluator.api.Operation;
 import be.nabu.libs.evaluator.api.OperationProvider.OperationType;
 import be.nabu.libs.evaluator.base.BaseOperation;
@@ -78,6 +80,29 @@ public class SeleneseMethodProvider implements MethodProvider {
 			// do nothing
 		}
 
+		@Override
+		public String toString() {
+			StringBuilder builder = new StringBuilder();
+			// first the method name
+			builder.append((String) getParts().get(0).getContent());
+			// then the rest
+			builder.append("(");
+			for (int i = 1; i < getParts().size(); i++) {
+				QueryPart part = getParts().get(i);
+				if (i > 1) {
+					builder.append(", ");
+				}
+				if (part.getType() == Type.STRING) {
+					builder.append("\"" + part.getContent().toString() + "\"");
+				}
+				else {
+					builder.append(part.getContent().toString());
+				}
+			}
+			builder.append(")");
+			return builder.toString();
+		}
+		
 		@SuppressWarnings({ "rawtypes", "unchecked" })
 		@Override
 		public Object evaluate(ExecutionContext context) throws EvaluationException {
