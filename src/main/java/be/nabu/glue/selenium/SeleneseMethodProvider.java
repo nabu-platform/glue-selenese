@@ -112,7 +112,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 				arguments.add(argumentOperation.evaluate(context));
 			}
 			if (arguments.size() == 0) {
-				arguments.add("testSuite.html");
+				arguments.add("testcase.html");
 			}
 			InputStream xml = null;
 			if (arguments.get(0) instanceof String) {
@@ -172,7 +172,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 				if (step.getContent() != null && !step.getContent().isEmpty()) {
 					message += ": " + step.getContent();
 				}
-				ScriptRuntime.getRuntime().log(message);
+				if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
+					ScriptRuntime.getRuntime().log(message);
+				}
 				if (step.getAction().equalsIgnoreCase("open")) {
 					driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
 				}
@@ -204,7 +206,6 @@ public class SeleneseMethodProvider implements MethodProvider {
 					driver.manage().window().maximize();
 				}
 				else if (step.getAction().equalsIgnoreCase("setSpeed")) {
-					ScriptRuntime.getRuntime().log("Setting speed to " + step.getTarget());
 					this.sleep = new Long(step.getTarget());
 				}
 				else if (step.getAction().equalsIgnoreCase("close")) {
@@ -364,7 +365,6 @@ public class SeleneseMethodProvider implements MethodProvider {
 				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				String string = new String(output.toByteArray(), charset);
 				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context);
-				System.out.println(string);
 				JAXBContext jaxb = JAXBContext.newInstance(SeleneseTestCase.class);
 				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(string.getBytes(charset))));
 			}
