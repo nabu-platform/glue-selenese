@@ -12,7 +12,10 @@ import java.net.URL;
 import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
@@ -162,6 +165,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return new RemoteWebDriver(url, capabilities);
 		}
 		
+		@SuppressWarnings("unchecked")
 		private void run(SeleneseTestCase testCase, ExecutionContext context) throws EvaluationException, IOException {
 			WebDriver driver = getFirefoxDriver();
 			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
@@ -218,16 +222,25 @@ public class SeleneseMethodProvider implements MethodProvider {
 					// do nothing
 				}
 				else if (step.getAction().equalsIgnoreCase("captureEntirePageScreenshot")) {
+					String name = step.getTarget() != null && !step.getTarget().isEmpty() ? step.getTarget().replace('\\', '/').replaceAll(".*/", "") : UUID.randomUUID().toString();
 					byte [] screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
-					// TODO: remove this
-					File temporary = File.createTempFile("image_" + step.getTarget().replace('\\', '/').replaceAll(".*/", ""), ".png");
-					FileOutputStream output = new FileOutputStream(temporary);
-					try {
-						output.write(screenshot);
+					// if you are debugging, write the screenshots to file
+					if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
+						File temporary = File.createTempFile("screenshot_" + name, ".png");
+						FileOutputStream output = new FileOutputStream(temporary);
+						try {
+							output.write(screenshot);
+							ScriptRuntime.getRuntime().log("Created screenshot " + temporary);
+						}
+						finally {
+							output.close();
+						}
 					}
-					finally {
-						output.close();
+					if (!ScriptRuntime.getRuntime().getContext().containsKey("screenshots")) {
+						ScriptRuntime.getRuntime().getContext().put("screenshots", new LinkedHashMap<String, byte[]>());
 					}
+					Map<String, byte[]> screenshots = (Map<String, byte[]>) ScriptRuntime.getRuntime().getContext().get("screenshots");
+					screenshots.put(name.endsWith(".png") ? name : name + ".png", screenshot);
 				}
 				else if (step.getAction().equalsIgnoreCase("selectWindow")) {
 					if (previousStep != null && previousStep.getAction().equalsIgnoreCase("waitForPopup")) {
