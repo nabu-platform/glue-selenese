@@ -30,6 +30,8 @@ import javax.xml.transform.stream.StreamSource;
 import org.openqa.selenium.Alert;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Capabilities;
+import org.openqa.selenium.OutputType;
+import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeOptions;
@@ -214,6 +216,18 @@ public class SeleneseMethodProvider implements MethodProvider {
 				}
 				else if (step.getAction().equalsIgnoreCase("waitForPopUp")) {
 					// do nothing
+				}
+				else if (step.getAction().equalsIgnoreCase("captureEntirePageScreenshot")) {
+					byte [] screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
+					// TODO: remove this
+					File temporary = File.createTempFile("image_" + step.getTarget().replace('\\', '/').replaceAll(".*/", ""), ".png");
+					FileOutputStream output = new FileOutputStream(temporary);
+					try {
+						output.write(screenshot);
+					}
+					finally {
+						output.close();
+					}
 				}
 				else if (step.getAction().equalsIgnoreCase("selectWindow")) {
 					if (previousStep != null && previousStep.getAction().equalsIgnoreCase("waitForPopup")) {
