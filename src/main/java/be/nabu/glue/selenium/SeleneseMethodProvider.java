@@ -346,7 +346,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 					else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
 						element.click();
 						try {
-							Thread.sleep(step.getContent() == null ? this.sleep : new Long(step.getContent()));
+							Thread.sleep(step.getContent() == null || step.getContent().isEmpty() ? this.sleep : new Long(step.getContent()));
 						}
 						catch (InterruptedException e) {
 							// continue
