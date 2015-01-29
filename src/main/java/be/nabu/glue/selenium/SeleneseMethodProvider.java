@@ -12,6 +12,7 @@ import java.net.URL;
 import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,7 @@ import be.nabu.glue.ScriptRuntime;
 import be.nabu.glue.api.ExecutionContext;
 import be.nabu.glue.api.MethodDescription;
 import be.nabu.glue.api.MethodProvider;
+import be.nabu.glue.api.ParameterDescription;
 import be.nabu.glue.impl.SimpleMethodDescription;
 import be.nabu.glue.impl.SimpleParameterDescription;
 import be.nabu.libs.evaluator.EvaluationException;
@@ -471,7 +473,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 	public List<MethodDescription> getAvailableMethods() {
 		List<MethodDescription> descriptions = new ArrayList<MethodDescription>();
 		descriptions.add(new SimpleMethodDescription("selenese", "This will run a selenese script created using the selenium IDE",
-				new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream")));
+			Arrays.asList(new ParameterDescription [] { new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream") } ),
+			new ArrayList<ParameterDescription>()));
 		return descriptions;
 	}
 }
