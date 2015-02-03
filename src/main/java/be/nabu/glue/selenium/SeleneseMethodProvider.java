@@ -472,7 +472,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 	@Override
 	public List<MethodDescription> getAvailableMethods() {
 		List<MethodDescription> descriptions = new ArrayList<MethodDescription>();
-		descriptions.add(new SimpleMethodDescription("selenese", "This will run a selenese script created using the selenium IDE",
+		descriptions.add(new SimpleMethodDescription("Selenium", "selenese", "This will run a selenese script created using the selenium IDE",
 			Arrays.asList(new ParameterDescription [] { new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream") } ),
 			new ArrayList<ParameterDescription>()));
 		return descriptions;
