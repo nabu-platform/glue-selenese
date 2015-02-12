@@ -181,7 +181,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 					message += ": " + step.getContent();
 				}
 				if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
-					ScriptRuntime.getRuntime().log(message);
+					ScriptRuntime.getRuntime().getFormatter().print(message);
 				}
 				if (step.getAction().equalsIgnoreCase("open")) {
 					driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
@@ -232,7 +232,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 						FileOutputStream output = new FileOutputStream(temporary);
 						try {
 							output.write(screenshot);
-							ScriptRuntime.getRuntime().log("Created screenshot " + temporary);
+							ScriptRuntime.getRuntime().getFormatter().print("Created screenshot " + temporary);
 						}
 						finally {
 							output.close();
