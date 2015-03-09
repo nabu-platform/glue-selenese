@@ -13,6 +13,7 @@ import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +34,6 @@ import javax.xml.transform.stream.StreamSource;
 
 import org.openqa.selenium.Alert;
 import org.openqa.selenium.By;
-import org.openqa.selenium.Capabilities;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.WebDriver;
@@ -54,6 +54,8 @@ import be.nabu.glue.api.MethodProvider;
 import be.nabu.glue.api.ParameterDescription;
 import be.nabu.glue.impl.SimpleMethodDescription;
 import be.nabu.glue.impl.SimpleParameterDescription;
+import be.nabu.glue.impl.methods.ScriptMethods;
+import be.nabu.glue.impl.methods.TestMethods;
 import be.nabu.libs.evaluator.EvaluationException;
 import be.nabu.libs.evaluator.QueryPart;
 import be.nabu.libs.evaluator.QueryPart.Type;
@@ -78,7 +80,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 	
 	public static class SeleneseOperation extends BaseOperation<ExecutionContext> {
 
-		private long sleep = 10000;
+		private long sleep = 10000, maxWait;
 		
 		private List<File> temporaryFiles = new ArrayList<File>();
 		
@@ -163,202 +165,258 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return new FirefoxDriver(capabilities);
 		}
 		
-		protected WebDriver getRemoteDriver(URL url, Capabilities capabilities) {
+		protected WebDriver getRemoteDriver(URL url) {
+			// not sure what capabilities to give it, use a mix
+			DesiredCapabilities capabilities = DesiredCapabilities.firefox();
+			FirefoxProfile profile = new FirefoxProfile();
+			profile.setPreference("intl.accept_languages", "nl-BE, nl");
+			capabilities.setCapability(FirefoxDriver.PROFILE, profile);
+			ChromeOptions co = new ChromeOptions();
+			co.addArguments("?", "nl-BE, nl");
+			capabilities.setCapability(ChromeOptions.CAPABILITY, co);
 			return new RemoteWebDriver(url, capabilities);
 		}
 		
 		@SuppressWarnings("unchecked")
 		private void run(SeleneseTestCase testCase, ExecutionContext context) throws EvaluationException, IOException {
-			WebDriver driver = getFirefoxDriver();
+			String url = ScriptMethods.environment("selenium.server.url");
+			maxWait = ScriptMethods.environment("selenium.server.timeout") == null ? 60000 : new Long(ScriptMethods.environment("selenium.server.url"));
+			WebDriver driver = url == null ? getFirefoxDriver() : getRemoteDriver(new URL(url));
 			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
 			SeleneseStep previousStep = null;
-			for (SeleneseStep step : testCase.getSteps()) {
-				String message = step.getAction();
-				if (step.getTarget() != null && !step.getTarget().isEmpty()) {
-					message += " @ " + step.getTarget();
-				}
-				if (step.getContent() != null && !step.getContent().isEmpty()) {
-					message += ": " + step.getContent();
-				}
-				if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
-					ScriptRuntime.getRuntime().getFormatter().print(message);
-				}
-				if (step.getAction().equalsIgnoreCase("open")) {
-					driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
-				}
-				else if (step.getAction().equalsIgnoreCase("waitForTextPresent")) {
-					while (!Thread.interrupted()) {
-						if (driver.getPageSource().contains(step.getTarget())) {
-							break;
-						}
+			boolean closed = false;
+			try {
+				for (SeleneseStep step : testCase.getSteps()) {
+					String message = step.getAction();
+					if (step.getTarget() != null && !step.getTarget().isEmpty()) {
+						message += " @ " + step.getTarget();
 					}
-				}
-				else if (step.getAction().equalsIgnoreCase("waitForTextNotPresent")) {
-					while (!Thread.interrupted()) {
-						if (!driver.getPageSource().contains(step.getTarget())) {
-							break;
-						}
+					if (step.getContent() != null && !step.getContent().isEmpty()) {
+						message += ": " + step.getContent();
 					}
-				}
-				else if (step.getAction().equalsIgnoreCase("verifyTextPresent")) {
-					if (!driver.getPageSource().contains(step.getTarget())) {
-						throw new EvaluationException("Could not verify that the text '" + step.getTarget() + "' was present");
-					}
-				}
-				else if (step.getAction().equalsIgnoreCase("verifyTextNotPresent")) {
-					if (driver.getPageSource().contains(step.getTarget())) {
-						throw new EvaluationException("Could not verify that the text '" + step.getTarget() + "' was present");
-					}
-				}
-				else if (step.getAction().equalsIgnoreCase("windowMaximize")) {
-					driver.manage().window().maximize();
-				}
-				else if (step.getAction().equalsIgnoreCase("setSpeed")) {
-					this.sleep = new Long(step.getTarget());
-				}
-				else if (step.getAction().equalsIgnoreCase("close")) {
-					driver.close();
-					break;
-				}
-				else if (step.getAction().equalsIgnoreCase("waitForPopUp")) {
-					// do nothing
-				}
-				else if (step.getAction().equalsIgnoreCase("captureEntirePageScreenshot")) {
-					String name = step.getTarget() != null && !step.getTarget().isEmpty() ? step.getTarget().replace('\\', '/').replaceAll(".*/", "") : UUID.randomUUID().toString();
-					byte [] screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
-					// if you are debugging, write the screenshots to file
 					if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
-						File temporary = File.createTempFile("screenshot_" + name, ".png");
-						FileOutputStream output = new FileOutputStream(temporary);
-						try {
-							output.write(screenshot);
-							ScriptRuntime.getRuntime().getFormatter().print("Created screenshot " + temporary);
-						}
-						finally {
-							output.close();
+						ScriptRuntime.getRuntime().getFormatter().print(message);
+					}
+					if (step.getAction().equalsIgnoreCase("open")) {
+						driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
+					}
+					else if (step.getAction().equalsIgnoreCase("waitForTextPresent")) {
+						Date date = new Date();
+						while (!Thread.interrupted()) {
+							if (driver.getPageSource().contains(step.getTarget())) {
+								break;
+							}
+							else if (new Date().getTime() - date.getTime() > maxWait) {
+								throw new EvaluationException("Timed out waiting for: " + step.getTarget());
+							}
 						}
 					}
-					if (!ScriptRuntime.getRuntime().getContext().containsKey("screenshots")) {
-						ScriptRuntime.getRuntime().getContext().put("screenshots", new LinkedHashMap<String, byte[]>());
+					else if (step.getAction().equalsIgnoreCase("waitForTextNotPresent")) {
+						Date date = new Date();
+						while (!Thread.interrupted()) {
+							if (!driver.getPageSource().contains(step.getTarget())) {
+								break;
+							}
+							else if (new Date().getTime() - date.getTime() > maxWait) {
+								throw new EvaluationException("Timed out waiting for: " + step.getTarget());
+							}
+						}
 					}
-					Map<String, byte[]> screenshots = (Map<String, byte[]>) ScriptRuntime.getRuntime().getContext().get("screenshots");
-					screenshots.put(name.endsWith(".png") ? name : name + ".png", screenshot);
-				}
-				else if (step.getAction().equalsIgnoreCase("selectWindow")) {
-					if (previousStep != null && previousStep.getAction().equalsIgnoreCase("waitForPopup")) {
-						WebDriverWait wait = new WebDriverWait(driver, this.sleep);
-						wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(step.getTarget()));
-					}
-					else {
-						driver.switchTo().window(step.getTarget().equals("null") ? null : step.getTarget());
-					}
-				}
-				else if (step.getAction().equalsIgnoreCase("assertConfirmation")) {
-					Alert alert = driver.switchTo().alert();
-					if (alert.getText().equals(step.getTarget())) {
-						alert.accept();
-					}
-				}
-				else {
-					By by = null;
-					if (step.getTarget().matches("^[\\w]+=.*")) {
-						int index = step.getTarget().indexOf('=');
-						String selector = step.getTarget().substring(0, index).trim();
-						String value = step.getTarget().substring(index + 1).trim();
-						if (selector.equalsIgnoreCase("id")) {
-							by = By.id(value);
-						}
-						else if (selector.equalsIgnoreCase("css")) {
-							by = By.cssSelector(value);
-						}
-						else if (selector.equalsIgnoreCase("link")) {
-							by = By.linkText(value);
-						}
-						else if (selector.equalsIgnoreCase("xpath")) {
-							by = By.xpath(value);
-						}
-						// TODO: the "class" selector is a guess, i haven't actually seen it in action yet
-						else if (selector.equalsIgnoreCase("class")) {
-							by = By.className(value);
-						}
-						// TODO
-						else if (selector.equalsIgnoreCase("tag")) {
-							by = By.tagName(value);
-						}
-						// TODO
-						else if (selector.equalsIgnoreCase("name")) {
-							by = By.name(value);
+					else if (step.getAction().equalsIgnoreCase("verifyTextPresent") || step.getAction().equalsIgnoreCase("assertTextPresent")) {
+						boolean fail = step.getAction().startsWith("assert");
+						if (step.getTarget().contains("*")) {
+							TestMethods.check("Verify presence of text", driver.getPageSource().matches(".*" + step.getTarget().replaceAll("\\*", ".*") + ".*"), step.getTarget(), fail);
 						}
 						else {
-							throw new EvaluationException("Unknown selector type: " + selector);
+							TestMethods.check("Verify presence of text",  driver.getPageSource().contains(step.getTarget()), step.getTarget(), fail);
 						}
 					}
-					else {
-						by = By.xpath(step.getTarget());
+					else if ((step.getContent() == null || step.getContent().isEmpty()) && (step.getAction().equalsIgnoreCase("verifyTextNotPresent") || step.getAction().equalsIgnoreCase("assertTextNotPresent"))) {
+						TestMethods.check("Verify absence of text", driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getAction().startsWith("assert"));
 					}
-					WebDriverWait wait = new WebDriverWait(driver, this.sleep);
-					wait.until(ExpectedConditions.presenceOfElementLocated(by));
-					
-					WebElement element = driver.findElement(by);
-					// you are requesting a file upload
-					if (element == null) {
-						throw new EvaluationException("Can not find element " + by);
+					else if (step.getAction().equalsIgnoreCase("windowMaximize")) {
+						driver.manage().window().maximize();
 					}
-					if (step.getAction().equalsIgnoreCase("type")) {
-						if (element.getTagName().equalsIgnoreCase("input") && element.getAttribute("type").equalsIgnoreCase("file")) {
-							String fileName = step.getContent().replaceAll(".*[\\\\/]+([^\\\\/]+)$", "$1");
-							InputStream content = find(fileName);
-							if (content == null) {
-								throw new FileNotFoundException("Could not find file " + fileName + " for upload");
-							}
+					else if (step.getAction().equalsIgnoreCase("waitForPageToLoad")) {
+						// TODO
+					}
+					else if (step.getAction().equalsIgnoreCase("waitForFrameToLoad")) {
+						// TODO
+					}
+					else if (step.getAction().equalsIgnoreCase("setSpeed")) {
+						this.sleep = new Long(step.getTarget()) * 1000;
+					}
+					else if (step.getAction().equalsIgnoreCase("close")) {
+						driver.close();
+						closed = true;
+						break;
+					}
+					else if (step.getAction().equalsIgnoreCase("waitForPopUp")) {
+						// do nothing
+					}
+					else if (step.getAction().equalsIgnoreCase("captureEntirePageScreenshot")) {
+						String name = step.getTarget() != null && !step.getTarget().isEmpty() ? step.getTarget().replace('\\', '/').replaceAll(".*/", "") : UUID.randomUUID().toString();
+						byte [] screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
+						// if you are debugging, write the screenshots to file
+						if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
+							File temporary = File.createTempFile("screenshot_" + name, ".png");
+							FileOutputStream output = new FileOutputStream(temporary);
 							try {
-								File file = File.createTempFile(fileName.replaceAll("\\.[^.]+", ""), fileName.replaceAll(".*\\.([^.]+)", "$1"));
-								temporaryFiles.add(file);
-								FileOutputStream output = new FileOutputStream(file);
-								try {
-									int read = 0;
-									byte [] buffer = new byte[4096];
-									while ((read = content.read(buffer)) != -1) {
-										output.write(buffer, 0, read);
-									}
-									element.sendKeys(file.getAbsolutePath());
-								}
-								finally {
-									output.close();
-								}
+								output.write(screenshot);
+								ScriptRuntime.getRuntime().getFormatter().print("Created screenshot " + temporary);
 							}
 							finally {
-								content.close();
+								output.close();
+							}
+						}
+						if (!ScriptRuntime.getRuntime().getContext().containsKey("screenshots")) {
+							ScriptRuntime.getRuntime().getContext().put("screenshots", new LinkedHashMap<String, byte[]>());
+						}
+						Map<String, byte[]> screenshots = (Map<String, byte[]>) ScriptRuntime.getRuntime().getContext().get("screenshots");
+						screenshots.put(name.endsWith(".png") ? name : name + ".png", screenshot);
+					}
+					else if (step.getAction().equalsIgnoreCase("selectWindow")) {
+						if (previousStep != null && previousStep.getAction().equalsIgnoreCase("waitForPopup")) {
+							WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+							wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(step.getTarget()));
+						}
+						else {
+							driver.switchTo().window(step.getTarget().equals("null") ? null : step.getTarget());
+						}
+					}
+					else if (step.getAction().equalsIgnoreCase("assertConfirmation")) {
+						Alert alert = driver.switchTo().alert();
+						if (alert.getText().equals(step.getTarget())) {
+							alert.accept();
+						}
+					}
+					else {
+						By by = null;
+						if (step.getTarget().matches("^[\\w]+=.*")) {
+							int index = step.getTarget().indexOf('=');
+							String selector = step.getTarget().substring(0, index).trim();
+							String value = step.getTarget().substring(index + 1).trim();
+							if (selector.equalsIgnoreCase("id")) {
+								by = By.id(value);
+							}
+							else if (selector.equalsIgnoreCase("css")) {
+								by = By.cssSelector(value);
+							}
+							else if (selector.equalsIgnoreCase("link")) {
+								by = By.linkText(value);
+							}
+							else if (selector.equalsIgnoreCase("xpath")) {
+								by = By.xpath(value);
+							}
+							// TODO: the "class" selector is a guess, i haven't actually seen it in action yet
+							else if (selector.equalsIgnoreCase("class")) {
+								by = By.className(value);
+							}
+							// TODO
+							else if (selector.equalsIgnoreCase("tag")) {
+								by = By.tagName(value);
+							}
+							// TODO
+							else if (selector.equalsIgnoreCase("name")) {
+								by = By.name(value);
+							}
+							else {
+								throw new EvaluationException("Unknown selector type: " + selector);
 							}
 						}
 						else {
-							element.sendKeys(step.getContent());
+							by = By.xpath(step.getTarget());
+						}
+						WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+						wait.until(ExpectedConditions.presenceOfElementLocated(by));
+						
+						WebElement element = driver.findElement(by);
+						// you are requesting a file upload
+						if (element == null) {
+							throw new EvaluationException("Can not find element " + by);
+						}
+						if (step.getAction().equalsIgnoreCase("type")) {
+							if (element.getTagName().equalsIgnoreCase("input") && element.getAttribute("type").equalsIgnoreCase("file")) {
+								String fileName = step.getContent().replaceAll(".*[\\\\/]+([^\\\\/]+)$", "$1");
+								InputStream content = find(fileName);
+								if (content == null) {
+									throw new FileNotFoundException("Could not find file " + fileName + " for upload");
+								}
+								try {
+									File file = File.createTempFile(fileName.replaceAll("\\.[^.]+", ""), fileName.replaceAll(".*\\.([^.]+)", "$1"));
+									temporaryFiles.add(file);
+									FileOutputStream output = new FileOutputStream(file);
+									try {
+										int read = 0;
+										byte [] buffer = new byte[4096];
+										while ((read = content.read(buffer)) != -1) {
+											output.write(buffer, 0, read);
+										}
+										element.sendKeys(file.getAbsolutePath());
+									}
+									finally {
+										output.close();
+									}
+								}
+								finally {
+									content.close();
+								}
+							}
+							else {
+								element.sendKeys(step.getContent());
+							}
+						}
+						else if (step.getAction().equalsIgnoreCase("store")) {
+							context.getPipeline().put(step.getContent(), element.getText());
+						}
+						else if (step.getAction().equalsIgnoreCase("doubleClick")) {
+							Actions action = new Actions(driver);
+							// there is apparently a bug where you have to send this before the double click will work: http://stackoverflow.com/questions/25756876/selenium-webdriver-double-click-doesnt-work
+							driver.findElement(by).sendKeys("");
+							action.doubleClick(element).perform();
+						}
+						else if (step.getAction().equalsIgnoreCase("waitForElementPresent") || step.getAction().equalsIgnoreCase("verifyElementPresent")) {
+							// we already waited for the element, so keep going
+						}
+						else if (step.getAction().equalsIgnoreCase("verifyText") || step.getAction().equalsIgnoreCase("assertText")) {
+							boolean fail = step.getAction().startsWith("assert");
+							if (step.getTarget().contains("*")) {
+								boolean matches = element.getText().matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*");
+								TestMethods.check("Verify presence of text in " + step.getTarget(), matches, matches ? step.getContent() : element.getText() + " !~ " + step.getContent(), fail);
+							}
+							else {
+								boolean contains = element.getText().contains(step.getContent());
+								TestMethods.check("Verify presence of text in " + step.getTarget(), contains, contains ? step.getContent() : element.getText() + " !# " + step.getContent(), fail);
+							}
+						}
+						else if ((step.getContent() == null || step.getContent().isEmpty()) && (step.getAction().equalsIgnoreCase("verifyTextNotPresent") || step.getAction().equalsIgnoreCase("assertTextNotPresent"))) {
+							TestMethods.check("Verify absence of text in " + step.getTarget(), element.getText().contains(step.getContent()), step.getContent(), step.getAction().startsWith("assert"));
+						}
+						else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
+							element.click();
+							try {
+								Thread.sleep(step.getContent() == null || step.getContent().isEmpty() ? this.sleep : new Long(step.getContent()));
+							}
+							catch (InterruptedException e) {
+								// continue
+							}
+						}
+						else if (step.getAction().equalsIgnoreCase("click") || (step.getAction().equalsIgnoreCase("clickAt") && (step.getContent() == null || step.getContent().trim().isEmpty()))) {
+							element.click();
+						}
+						else if (step.getAction().equalsIgnoreCase("clickAt")) {
+							Actions action = new Actions(driver);
+							String [] parts = step.getContent().split(",");
+							action.moveToElement(element, new Integer(parts[0]), parts.length > 1 ? new Integer(parts[1]) : 0).click().perform();
 						}
 					}
-					else if (step.getAction().equalsIgnoreCase("store")) {
-						context.getPipeline().put(step.getContent(), element.getText());
-					}
-					else if (step.getAction().equalsIgnoreCase("doubleClick")) {
-						Actions action = new Actions(driver);
-						action.doubleClick(element);
-					}
-					else if (step.getAction().equalsIgnoreCase("waitForElementPresent") || step.getAction().equalsIgnoreCase("verifyElementPresent")) {
-						// we already waited for the element, so keep going
-					}
-					else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
-						element.click();
-						try {
-							Thread.sleep(step.getContent() == null || step.getContent().isEmpty() ? this.sleep : new Long(step.getContent()));
-						}
-						catch (InterruptedException e) {
-							// continue
-						}
-					}
-					else if (step.getAction().equalsIgnoreCase("click")) {
-						element.click();
-					}
+					previousStep = step;
 				}
-				previousStep = step;
+			}
+			finally {
+				if (!closed) {
+					driver.close();
+				}
 			}
 		}
 
