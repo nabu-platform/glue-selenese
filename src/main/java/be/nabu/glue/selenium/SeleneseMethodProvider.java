@@ -451,7 +451,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 				transform(xml, xsl, output);
 				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				String string = new String(output.toByteArray(), charset);
-				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context);
+				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context, false);
 				JAXBContext jaxb = JAXBContext.newInstance(SeleneseTestCase.class);
 				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(string.getBytes(charset))));
 			}
