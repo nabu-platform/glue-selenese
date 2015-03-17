@@ -38,6 +38,7 @@ import org.openqa.selenium.OutputType;
 import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
+import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxProfile;
@@ -63,6 +64,20 @@ import be.nabu.libs.evaluator.api.Operation;
 import be.nabu.libs.evaluator.api.OperationProvider.OperationType;
 import be.nabu.libs.evaluator.base.BaseOperation;
 
+/**
+ * To run it remotely, I first tried the root URL: http://my-server:4444
+ * However this gave a vague classcastexception that it can not cast a string to a map on this line in remote webdriver (242):
+ * 
+ *      Map<String, Object> rawCapabilities = (Map<String, Object>) response.getValue();
+ *      
+ * In trace mode you can see that the response is actually this: 
+ *     (Response: SessionID: null, Status: 0, Value: <html><head><title>Selenium Grid2.0 help</title></head><body>You are using grid 2.43.1<br>Find help on the official selenium wiki : <a href='http://code.google.com/p/selenium/wiki/Grid2' >more help here</a><br>default monitoring page : <a href='/grid/console' >console</a></body></html>)
+ * 
+ * What fixed it was adding "wd/hub" to the URL (found this on a stackoverflow):
+ * 			http://my-server:4444/wd/hub
+ * 
+ * It takes a while to do the initial connect but after that it's fast.
+ */
 public class SeleneseMethodProvider implements MethodProvider {
 	
 	@Override
@@ -162,7 +177,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			ChromeOptions co = new ChromeOptions();
 			co.addArguments("?", "nl-BE, nl");
 			capabilities.setCapability(ChromeOptions.CAPABILITY, co);
-			return new FirefoxDriver(capabilities);
+			return new ChromeDriver(capabilities);
 		}
 		
 		protected WebDriver getRemoteDriver(URL url) {
