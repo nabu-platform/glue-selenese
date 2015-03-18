@@ -45,6 +45,7 @@ import org.openqa.selenium.firefox.FirefoxProfile;
 import org.openqa.selenium.interactions.Actions;
 import org.openqa.selenium.remote.DesiredCapabilities;
 import org.openqa.selenium.remote.RemoteWebDriver;
+import org.openqa.selenium.support.ui.ExpectedCondition;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
@@ -202,6 +203,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 			boolean closed = false;
 			try {
 				for (SeleneseStep step : testCase.getSteps()) {
+					if (ScriptRuntime.getRuntime().isAborted()) {
+						break;
+					}
 					String message = step.getAction();
 					if (step.getTarget() != null && !step.getTarget().isEmpty()) {
 						message += " @ " + step.getTarget();
@@ -211,6 +215,16 @@ public class SeleneseMethodProvider implements MethodProvider {
 					}
 					if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
 						ScriptRuntime.getRuntime().getFormatter().print(message);
+					}
+					// the variables must be defined by now
+					if (step.getAction() != null) {
+						step.setAction(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getAction(), context, false));
+					}
+					if (step.getTarget() != null) {
+						step.setTarget(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getTarget(), context, false));
+					}
+					if (step.getContent() != null) {
+						step.setContent(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getContent(), context, false));
 					}
 					if (step.getAction().equalsIgnoreCase("open")) {
 						driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
@@ -247,7 +261,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 					}
 					else if ((step.getContent() == null || step.getContent().isEmpty()) && (step.getAction().equalsIgnoreCase("verifyTextNotPresent") || step.getAction().equalsIgnoreCase("assertTextNotPresent"))) {
-						TestMethods.check("Verify absence of text", driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getAction().startsWith("assert"));
+						TestMethods.check("Verify absence of text", !driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getAction().startsWith("assert"));
 					}
 					else if (step.getAction().equalsIgnoreCase("windowMaximize")) {
 						driver.manage().window().maximize();
@@ -306,6 +320,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 					}
 					else {
+						String attribute = null;
 						By by = null;
 						if (step.getTarget().matches("^[\\w]+=.*")) {
 							int index = step.getTarget().indexOf('=');
@@ -321,6 +336,13 @@ public class SeleneseMethodProvider implements MethodProvider {
 								by = By.linkText(value);
 							}
 							else if (selector.equalsIgnoreCase("xpath")) {
+								if (step.getAction().equalsIgnoreCase("verifyAttribute") || step.getAction().equalsIgnoreCase("assertAttribute")) {
+									int attributeLocation = value.lastIndexOf('@');
+									if (attributeLocation >= 0) {
+										attribute = value.substring(attributeLocation + 1);
+										value = value.substring(0, attributeLocation);
+									}
+								}
 								by = By.xpath(value);
 							}
 							// TODO: the "class" selector is a guess, i haven't actually seen it in action yet
@@ -342,8 +364,18 @@ public class SeleneseMethodProvider implements MethodProvider {
 						else {
 							by = By.xpath(step.getTarget());
 						}
+						
+						ExpectedCondition<?> presenceOfElementLocated;
+						
+						if (step.getAction().equalsIgnoreCase("waitForNotText")) {
+							presenceOfElementLocated = ExpectedConditions.not(ExpectedConditions.presenceOfElementLocated(by));
+						}
+						else {
+							presenceOfElementLocated = ExpectedConditions.presenceOfElementLocated(by);
+						}
+						
 						WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
-						wait.until(ExpectedConditions.presenceOfElementLocated(by));
+						wait.until(presenceOfElementLocated);
 						
 						WebElement element = driver.findElement(by);
 						// you are requesting a file upload
@@ -381,7 +413,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 								element.sendKeys(step.getContent());
 							}
 						}
-						else if (step.getAction().equalsIgnoreCase("store")) {
+						else if (step.getAction().equalsIgnoreCase("storeText")) {
 							context.getPipeline().put(step.getContent(), element.getText());
 						}
 						else if (step.getAction().equalsIgnoreCase("doubleClick")) {
@@ -393,19 +425,22 @@ public class SeleneseMethodProvider implements MethodProvider {
 						else if (step.getAction().equalsIgnoreCase("waitForElementPresent") || step.getAction().equalsIgnoreCase("verifyElementPresent")) {
 							// we already waited for the element, so keep going
 						}
-						else if (step.getAction().equalsIgnoreCase("verifyText") || step.getAction().equalsIgnoreCase("assertText")) {
+						else if (step.getAction().equalsIgnoreCase("verifyText") || step.getAction().equalsIgnoreCase("assertText") || step.getAction().equalsIgnoreCase("verifyAttribute") || step.getAction().equalsIgnoreCase("assertAttribute") || step.getAction().equalsIgnoreCase("waitForText")) {
 							boolean fail = step.getAction().startsWith("assert");
+							String type = step.getAction().replaceAll("^(wait|verify|assert)", "").toLowerCase();
+							String text = attribute == null ? element.getText() : element.getAttribute(attribute);
 							if (step.getTarget().contains("*")) {
-								boolean matches = element.getText().matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*");
-								TestMethods.check("Verify presence of text in " + step.getTarget(), matches, matches ? step.getContent() : element.getText() + " !~ " + step.getContent(), fail);
+								boolean matches = text.matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*");
+								TestMethods.check("Verify presence of " + type + " in " + step.getTarget(), matches, matches ? step.getContent() : text + " !~ " + step.getContent(), fail);
 							}
 							else {
-								boolean contains = element.getText().contains(step.getContent());
-								TestMethods.check("Verify presence of text in " + step.getTarget(), contains, contains ? step.getContent() : element.getText() + " !# " + step.getContent(), fail);
+								boolean contains = text.contains(step.getContent());
+								TestMethods.check("Verify presence of " + type + " in " + step.getTarget(), contains, contains ? step.getContent() : text + " !# " + step.getContent(), fail);
 							}
 						}
-						else if ((step.getContent() == null || step.getContent().isEmpty()) && (step.getAction().equalsIgnoreCase("verifyTextNotPresent") || step.getAction().equalsIgnoreCase("assertTextNotPresent"))) {
-							TestMethods.check("Verify absence of text in " + step.getTarget(), element.getText().contains(step.getContent()), step.getContent(), step.getAction().startsWith("assert"));
+						else if (step.getAction().equalsIgnoreCase("verifyNotText") || step.getAction().equalsIgnoreCase("assertNotText") || step.getAction().equalsIgnoreCase("verifyNotAttribute") || step.getAction().equalsIgnoreCase("assertNotAttribute")) {
+							String type = step.getAction().replaceAll("^(verify|assert)Not", "").toLowerCase();
+							TestMethods.check("Verify absence of " + type + " in " + step.getTarget(), !element.getText().contains(step.getContent()), step.getContent(), step.getAction().startsWith("assert"));
 						}
 						else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
 							element.click();
@@ -466,7 +501,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 				transform(xml, xsl, output);
 				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				String string = new String(output.toByteArray(), charset);
-				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context, false);
+				// in selenium you can make use of variables while running, so allow null for now
+				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context, true);
 				JAXBContext jaxb = JAXBContext.newInstance(SeleneseTestCase.class);
 				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(string.getBytes(charset))));
 			}
@@ -545,7 +581,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 	@Override
 	public List<MethodDescription> getAvailableMethods() {
 		List<MethodDescription> descriptions = new ArrayList<MethodDescription>();
-		descriptions.add(new SimpleMethodDescription("Selenium", "selenese", "This will run a selenese script created using the selenium IDE",
+		descriptions.add(new SimpleMethodDescription("selenium", "selenese", "This will run a selenese script created using the selenium IDE",
 			Arrays.asList(new ParameterDescription [] { new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream") } ),
 			new ArrayList<ParameterDescription>()));
 		return descriptions;
