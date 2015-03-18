@@ -202,6 +202,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			SeleneseStep previousStep = null;
 			boolean closed = false;
 			try {
+				String lastComment = null;
 				for (SeleneseStep step : testCase.getSteps()) {
 					if (ScriptRuntime.getRuntime().isAborted()) {
 						break;
@@ -229,6 +230,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 					if (step.getAction().equalsIgnoreCase("open")) {
 						driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
 					}
+					else if (step.getAction().equalsIgnoreCase("echo")) {
+						lastComment = step.getTarget();
+					}
 					else if (step.getAction().equalsIgnoreCase("waitForTextPresent")) {
 						Date date = new Date();
 						while (!Thread.interrupted()) {
@@ -253,15 +257,19 @@ public class SeleneseMethodProvider implements MethodProvider {
 					}
 					else if (step.getAction().equalsIgnoreCase("verifyTextPresent") || step.getAction().equalsIgnoreCase("assertTextPresent")) {
 						boolean fail = step.getAction().startsWith("assert");
+						String validateMessage = lastComment == null ? "Verify presence of text" : lastComment;
+						lastComment = null;
 						if (step.getTarget().contains("*")) {
-							TestMethods.check("Verify presence of text", driver.getPageSource().matches(".*" + step.getTarget().replaceAll("\\*", ".*") + ".*"), step.getTarget(), fail);
+							TestMethods.check(validateMessage, driver.getPageSource().matches(".*" + step.getTarget().replaceAll("\\*", ".*") + ".*"), step.getTarget(), fail);
 						}
 						else {
-							TestMethods.check("Verify presence of text",  driver.getPageSource().contains(step.getTarget()), step.getTarget(), fail);
+							TestMethods.check(validateMessage,  driver.getPageSource().contains(step.getTarget()), step.getTarget(), fail);
 						}
 					}
 					else if ((step.getContent() == null || step.getContent().isEmpty()) && (step.getAction().equalsIgnoreCase("verifyTextNotPresent") || step.getAction().equalsIgnoreCase("assertTextNotPresent"))) {
-						TestMethods.check("Verify absence of text", !driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getAction().startsWith("assert"));
+						String validateMessage = lastComment == null ? "Verify absence of text" : lastComment;
+						lastComment = null;
+						TestMethods.check(validateMessage, !driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getAction().startsWith("assert"));
 					}
 					else if (step.getAction().equalsIgnoreCase("windowMaximize")) {
 						driver.manage().window().maximize();
@@ -429,18 +437,22 @@ public class SeleneseMethodProvider implements MethodProvider {
 							boolean fail = step.getAction().startsWith("assert");
 							String type = step.getAction().replaceAll("^(wait|verify|assert)", "").toLowerCase();
 							String text = attribute == null ? element.getText() : element.getAttribute(attribute);
+							String validateMessage = lastComment == null ? "Verify presence of " + type + " in " + step.getTarget() : lastComment;
+							lastComment = null;
 							if (step.getTarget().contains("*")) {
 								boolean matches = text.matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*");
-								TestMethods.check("Verify presence of " + type + " in " + step.getTarget(), matches, matches ? step.getContent() : text + " !~ " + step.getContent(), fail);
+								TestMethods.check(validateMessage, matches, matches ? step.getContent() : text + " !~ " + step.getContent(), fail);
 							}
 							else {
 								boolean contains = text.contains(step.getContent());
-								TestMethods.check("Verify presence of " + type + " in " + step.getTarget(), contains, contains ? step.getContent() : text + " !# " + step.getContent(), fail);
+								TestMethods.check(validateMessage, contains, contains ? step.getContent() : text + " !# " + step.getContent(), fail);
 							}
 						}
 						else if (step.getAction().equalsIgnoreCase("verifyNotText") || step.getAction().equalsIgnoreCase("assertNotText") || step.getAction().equalsIgnoreCase("verifyNotAttribute") || step.getAction().equalsIgnoreCase("assertNotAttribute")) {
 							String type = step.getAction().replaceAll("^(verify|assert)Not", "").toLowerCase();
-							TestMethods.check("Verify absence of " + type + " in " + step.getTarget(), !element.getText().contains(step.getContent()), step.getContent(), step.getAction().startsWith("assert"));
+							String validateMessage = lastComment == null ? "Verify presence of " + type + " in " + step.getTarget() : lastComment;
+							lastComment = null;
+							TestMethods.check(validateMessage, !element.getText().contains(step.getContent()), step.getContent(), step.getAction().startsWith("assert"));
 						}
 						else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
 							element.click();
