@@ -1,4 +1,4 @@
-Adds a method `selenese()` that can take a HTML file created by the selenium IDE.
+Adds a method `selenese()` that can run an HTML file created by the selenium IDE.
 
 Note:
 
