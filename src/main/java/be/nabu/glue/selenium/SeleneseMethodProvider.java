@@ -8,6 +8,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.text.ParseException;
@@ -42,9 +43,12 @@ import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxProfile;
+import org.openqa.selenium.ie.InternetExplorerDriver;
 import org.openqa.selenium.interactions.Actions;
+import org.openqa.selenium.opera.OperaDriver;
 import org.openqa.selenium.remote.DesiredCapabilities;
 import org.openqa.selenium.remote.RemoteWebDriver;
+import org.openqa.selenium.safari.SafariDriver;
 import org.openqa.selenium.support.ui.ExpectedCondition;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
@@ -154,7 +158,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 			}
 			try {
 				SeleneseTestCase testCase = parse(xml, context);
-				run(testCase, context);
+				String language = arguments.size() >= 2 && arguments.get(1) != null ? arguments.get(1).toString() : ScriptMethods.environment("selenium.language");
+				String browser = arguments.size() >= 3 && arguments.get(2) != null ? arguments.get(2).toString() : ScriptMethods.environment("selenium.browser");
+				run(getDriver(browser, language), testCase, context);
 			}
 			catch (IOException e) {
 				throw new EvaluationException(e);
@@ -165,39 +171,111 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return true;
 		}
 		
-		protected WebDriver getFirefoxDriver() {
-			DesiredCapabilities capabilities = DesiredCapabilities.firefox();
-			FirefoxProfile profile = new FirefoxProfile();
-			profile.setPreference("intl.accept_languages", "nl-BE, nl");
-			capabilities.setCapability(FirefoxDriver.PROFILE, profile);
-			return new FirefoxDriver(capabilities);
+		private DesiredCapabilities getSafariCapabilities(String language) {
+			DesiredCapabilities capabilities = DesiredCapabilities.safari();
+			return capabilities;
 		}
 		
-		protected WebDriver getChromeDriver() {
+		private DesiredCapabilities getOperaCapabilities(String language) {
+			DesiredCapabilities capabilities = DesiredCapabilities.operaBlink();
+			return capabilities;
+		}
+		
+		private DesiredCapabilities getFirefoxCapabilities(String language) {
+			DesiredCapabilities capabilities = DesiredCapabilities.firefox();
+			FirefoxProfile profile = new FirefoxProfile();
+			if (language != null) {
+				profile.setPreference("intl.accept_languages", language);
+			}
+			capabilities.setCapability(FirefoxDriver.PROFILE, profile);
+			return capabilities;
+		}
+		
+		private WebDriver getFirefoxDriver(String language) {
+			return new FirefoxDriver(getFirefoxCapabilities(language));
+		}
+		
+		private WebDriver getSafariDriver(String language) {
+			return new SafariDriver(getSafariCapabilities(language));
+		}
+		
+		private WebDriver getOperaDriver(String language) {
+			return new OperaDriver(getOperaCapabilities(language));
+		}
+		
+		private WebDriver getChromeDriver(String language) {
+			// if the system property is not set but you have it configured in the glue properties, push it to the system properties
+			if (System.getProperty("webdriver.chrome.driver") == null && ScriptMethods.environment("webdriver.chrome.driver") != null) {
+				System.setProperty("webdriver.chrome.driver", ScriptMethods.environment("webdriver.chrome.driver"));
+			}
+			return new ChromeDriver(getChromeCapabilities(language));
+		}
+		
+		private WebDriver getInternetExplorerDriver(String language) {
+			return new InternetExplorerDriver(getInternetExplorerCapabilities(language));
+		}
+
+		private DesiredCapabilities getInternetExplorerCapabilities(String language) {
+			DesiredCapabilities capabilities = DesiredCapabilities.internetExplorer();
+			return capabilities;
+		}
+		
+		private DesiredCapabilities getChromeCapabilities(String language) {
 			DesiredCapabilities capabilities = DesiredCapabilities.chrome();
 			ChromeOptions co = new ChromeOptions();
-			co.addArguments("?", "nl-BE, nl");
+			if (language != null) {
+				co.addArguments("--lang=" + language);
+			}
 			capabilities.setCapability(ChromeOptions.CAPABILITY, co);
-			return new ChromeDriver(capabilities);
+			return capabilities;
 		}
 		
-		protected WebDriver getRemoteDriver(URL url) {
-			// not sure what capabilities to give it, use a mix
-			DesiredCapabilities capabilities = DesiredCapabilities.firefox();
-			FirefoxProfile profile = new FirefoxProfile();
-			profile.setPreference("intl.accept_languages", "nl-BE, nl");
-			capabilities.setCapability(FirefoxDriver.PROFILE, profile);
-			ChromeOptions co = new ChromeOptions();
-			co.addArguments("?", "nl-BE, nl");
-			capabilities.setCapability(ChromeOptions.CAPABILITY, co);
+		protected WebDriver getRemoteDriver(URL url, DesiredCapabilities capabilities) {
 			return new RemoteWebDriver(url, capabilities);
 		}
 		
-		@SuppressWarnings("unchecked")
-		private void run(SeleneseTestCase testCase, ExecutionContext context) throws EvaluationException, IOException {
+		private WebDriver getDriver(String browser, String language) throws MalformedURLException {
 			String url = ScriptMethods.environment("selenium.server.url");
+			// local execution
+			if (url == null) {
+				if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
+					return getChromeDriver(language);
+				}
+				else if (browser != null && (browser.equalsIgnoreCase("ie") || browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
+					return getInternetExplorerDriver(language);
+				}
+				else if (browser != null && browser.equalsIgnoreCase("opera")) {
+					return getOperaDriver(language);
+				}
+				else if (browser != null && browser.equalsIgnoreCase("safari")) {
+					return getSafariDriver(language);
+				}
+				else {
+					return getFirefoxDriver(language);
+				}
+			}
+			else {
+				if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
+					return getRemoteDriver(new URL(url), getChromeCapabilities(language));
+				}
+				else if (browser != null && (browser.equalsIgnoreCase("ie") || browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
+					return getRemoteDriver(new URL(url), getInternetExplorerCapabilities(language));
+				}
+				else if (browser != null && browser.equalsIgnoreCase("opera")) {
+					return getRemoteDriver(new URL(url), getOperaCapabilities(language));
+				}
+				else if (browser != null && browser.equalsIgnoreCase("safari")) {
+					return getRemoteDriver(new URL(url), getSafariCapabilities(language));
+				}
+				else {
+					return getRemoteDriver(new URL(url), getFirefoxCapabilities(language));
+				}
+			}
+		}
+		
+		@SuppressWarnings("unchecked")
+		private void run(WebDriver driver, SeleneseTestCase testCase, ExecutionContext context) throws EvaluationException, IOException {
 			maxWait = ScriptMethods.environment("selenium.server.timeout") == null ? 60000 : new Long(ScriptMethods.environment("selenium.server.url"));
-			WebDriver driver = url == null ? getFirefoxDriver() : getRemoteDriver(new URL(url));
 			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
 			SeleneseStep previousStep = null;
 			boolean closed = false;
@@ -503,15 +581,17 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return xml;
 		}
 		
-		private SeleneseTestCase parse(InputStream xml, ExecutionContext context) throws EvaluationException {
+		private SeleneseTestCase parse(InputStream xml, ExecutionContext context) throws EvaluationException, IOException {
 			try {
+				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				InputStream xsl = getClass().getClassLoader().getResourceAsStream("selenese2xml.xslt");
+				// remove the doctype in the header, it crashes some code
+				xml = new ByteArrayInputStream(new String(ScriptMethods.bytes(xml), charset).replaceFirst("<!DOCTYPE[^>]+>", "").getBytes(charset));
 				if (xsl == null) {
 					throw new RuntimeException("Can not find the file selenese2xml.xslt");
 				}
 				ByteArrayOutputStream output = new ByteArrayOutputStream();
 				transform(xml, xsl, output);
-				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				String string = new String(output.toByteArray(), charset);
 				// in selenium you can make use of variables while running, so allow null for now
 				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context, true);
