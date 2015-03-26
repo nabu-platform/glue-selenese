@@ -471,6 +471,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 							throw new EvaluationException("Can not find element " + by);
 						}
 						if (step.getAction().equalsIgnoreCase("type")) {
+							element.clear();
 							if (element.getTagName().equalsIgnoreCase("input") && element.getAttribute("type").equalsIgnoreCase("file")) {
 								String fileName = step.getContent().replaceAll(".*[\\\\/]+([^\\\\/]+)$", "$1");
 								InputStream content = find(fileName);
