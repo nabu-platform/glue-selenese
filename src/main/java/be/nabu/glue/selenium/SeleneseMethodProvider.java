@@ -387,7 +387,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 						if (!ScriptRuntime.getRuntime().getContext().containsKey("screenshots")) {
 							ScriptRuntime.getRuntime().getContext().put("screenshots", new LinkedHashMap<String, byte[]>());
 						}
+						// put it on the pipeline
 						Map<String, byte[]> screenshots = (Map<String, byte[]>) ScriptRuntime.getRuntime().getContext().get("screenshots");
+						ScriptRuntime.getRuntime().getExecutionContext().getPipeline().put("$screenshot" + screenshots.size(), screenshot);
 						screenshots.put(name.endsWith(".png") ? name : name + ".png", screenshot);
 					}
 					else if (step.getAction().equalsIgnoreCase("selectWindow")) {
