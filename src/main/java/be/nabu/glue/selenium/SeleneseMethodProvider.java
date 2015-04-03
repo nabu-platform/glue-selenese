@@ -2,6 +2,7 @@ package be.nabu.glue.selenium;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -65,6 +66,7 @@ import be.nabu.glue.impl.methods.TestMethods;
 import be.nabu.libs.evaluator.EvaluationException;
 import be.nabu.libs.evaluator.QueryPart;
 import be.nabu.libs.evaluator.QueryPart.Type;
+import be.nabu.libs.evaluator.annotations.MethodProviderClass;
 import be.nabu.libs.evaluator.api.Operation;
 import be.nabu.libs.evaluator.api.OperationProvider.OperationType;
 import be.nabu.libs.evaluator.base.BaseOperation;
@@ -83,19 +85,72 @@ import be.nabu.libs.evaluator.base.BaseOperation;
  * 
  * It takes a while to do the initial connect but after that it's fast.
  */
+@MethodProviderClass(namespace = "selenium")
 public class SeleneseMethodProvider implements MethodProvider {
 	
 	@Override
 	public Operation<ExecutionContext> resolve(String name) {
-		if (name.equalsIgnoreCase("selenese")) {
+		if (name.equalsIgnoreCase("selenese") || name.equalsIgnoreCase("selenium.selenese")) {
 			return new SeleneseOperation();
 		}
+		else if (name.equalsIgnoreCase("webdriver") || name.equalsIgnoreCase("selenium.webdriver")) {
+			return new WebDriverOperation();
+		}
 		return null;
+	}
+	
+	public static class WrappedDriver implements Closeable {
+		
+		private WebDriver driver;
+		
+		public WrappedDriver(WebDriver driver) {
+			this.driver = driver;
+		}
+
+		public WebDriver getDriver() {
+			return driver;
+		}
+
+		@Override
+		public void close() {
+			driver.close();
+		}
 	}
 	
 	public static void transform(InputStream xml, InputStream xsl, OutputStream result) throws TransformerFactoryConfigurationError, TransformerException {
 		Transformer transformer = TransformerFactory.newInstance().newTransformer(new StreamSource(xsl));
 		transformer.transform(new StreamSource(xml), new StreamResult(result));
+	}
+	
+	public static class WebDriverOperation extends BaseOperation<ExecutionContext> {
+
+		@Override
+		public void finish() throws ParseException {
+			// do nothing
+		}
+
+		@SuppressWarnings({ "rawtypes", "unchecked" })
+		@Override
+		public Object evaluate(ExecutionContext context) throws EvaluationException {
+			List arguments = new ArrayList();
+			for (int i = 1; i < getParts().size(); i++) {
+				Operation<ExecutionContext> argumentOperation = (Operation<ExecutionContext>) getParts().get(i).getContent();
+				arguments.add(argumentOperation.evaluate(context));
+			}
+			String browser = arguments.size() >= 1 && arguments.get(0) != null ? arguments.get(0).toString() : ScriptMethods.environment("selenium.browser");
+			String language = arguments.size() >= 2 && arguments.get(1) != null ? arguments.get(1).toString() : ScriptMethods.environment("selenium.language");
+			try {
+				return new WrappedDriver(getDriver(browser, language));
+			}
+			catch (Exception e) {
+				throw new EvaluationException(e);
+			}
+		}
+
+		@Override
+		public OperationType getType() {
+			return OperationType.METHOD;
+		}
 	}
 	
 	public static class SeleneseOperation extends BaseOperation<ExecutionContext> {
@@ -158,9 +213,20 @@ public class SeleneseMethodProvider implements MethodProvider {
 			}
 			try {
 				SeleneseTestCase testCase = parse(xml, context);
-				String language = arguments.size() >= 2 && arguments.get(1) != null ? arguments.get(1).toString() : ScriptMethods.environment("selenium.language");
-				String browser = arguments.size() >= 3 && arguments.get(2) != null ? arguments.get(2).toString() : ScriptMethods.environment("selenium.browser");
-				run(getDriver(browser, language), testCase, context);
+				
+				WebDriver driver = arguments.size() >= 2 && arguments.get(1) instanceof WrappedDriver
+					? ((WrappedDriver) arguments.get(1)).getDriver()
+					: null;
+				boolean mustClose = false;
+				// if there is no externally managed driver, create a new instance
+				// this instance is managed by this operation and must be closed at the end
+				if (driver == null) {
+					String browser = arguments.size() >= 2 && arguments.get(1) != null ? arguments.get(1).toString() : ScriptMethods.environment("selenium.browser");
+					String language = arguments.size() >= 3 && arguments.get(2) != null ? arguments.get(2).toString() : ScriptMethods.environment("selenium.language");
+					driver = getDriver(browser, language);
+					mustClose = true;
+				}
+				run(driver, testCase, context, mustClose);
 			}
 			catch (IOException e) {
 				throw new EvaluationException(e);
@@ -171,110 +237,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return true;
 		}
 		
-		private DesiredCapabilities getSafariCapabilities(String language) {
-			DesiredCapabilities capabilities = DesiredCapabilities.safari();
-			return capabilities;
-		}
-		
-		private DesiredCapabilities getOperaCapabilities(String language) {
-			DesiredCapabilities capabilities = DesiredCapabilities.operaBlink();
-			return capabilities;
-		}
-		
-		private DesiredCapabilities getFirefoxCapabilities(String language) {
-			DesiredCapabilities capabilities = DesiredCapabilities.firefox();
-			FirefoxProfile profile = new FirefoxProfile();
-			if (language != null) {
-				profile.setPreference("intl.accept_languages", language);
-			}
-			capabilities.setCapability(FirefoxDriver.PROFILE, profile);
-			return capabilities;
-		}
-		
-		private WebDriver getFirefoxDriver(String language) {
-			return new FirefoxDriver(getFirefoxCapabilities(language));
-		}
-		
-		private WebDriver getSafariDriver(String language) {
-			return new SafariDriver(getSafariCapabilities(language));
-		}
-		
-		private WebDriver getOperaDriver(String language) {
-			return new OperaDriver(getOperaCapabilities(language));
-		}
-		
-		private WebDriver getChromeDriver(String language) {
-			// if the system property is not set but you have it configured in the glue properties, push it to the system properties
-			if (System.getProperty("webdriver.chrome.driver") == null && ScriptMethods.environment("webdriver.chrome.driver") != null) {
-				System.setProperty("webdriver.chrome.driver", ScriptMethods.environment("webdriver.chrome.driver"));
-			}
-			return new ChromeDriver(getChromeCapabilities(language));
-		}
-		
-		private WebDriver getInternetExplorerDriver(String language) {
-			return new InternetExplorerDriver(getInternetExplorerCapabilities(language));
-		}
-
-		private DesiredCapabilities getInternetExplorerCapabilities(String language) {
-			DesiredCapabilities capabilities = DesiredCapabilities.internetExplorer();
-			return capabilities;
-		}
-		
-		private DesiredCapabilities getChromeCapabilities(String language) {
-			DesiredCapabilities capabilities = DesiredCapabilities.chrome();
-			ChromeOptions co = new ChromeOptions();
-			if (language != null) {
-				co.addArguments("--lang=" + language);
-			}
-			capabilities.setCapability(ChromeOptions.CAPABILITY, co);
-			return capabilities;
-		}
-		
-		protected WebDriver getRemoteDriver(URL url, DesiredCapabilities capabilities) {
-			return new RemoteWebDriver(url, capabilities);
-		}
-		
-		private WebDriver getDriver(String browser, String language) throws MalformedURLException {
-			String url = ScriptMethods.environment("selenium.server.url");
-			// local execution
-			if (url == null) {
-				if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
-					return getChromeDriver(language);
-				}
-				else if (browser != null && (browser.equalsIgnoreCase("ie") || browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
-					return getInternetExplorerDriver(language);
-				}
-				else if (browser != null && browser.equalsIgnoreCase("opera")) {
-					return getOperaDriver(language);
-				}
-				else if (browser != null && browser.equalsIgnoreCase("safari")) {
-					return getSafariDriver(language);
-				}
-				else {
-					return getFirefoxDriver(language);
-				}
-			}
-			else {
-				if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
-					return getRemoteDriver(new URL(url), getChromeCapabilities(language));
-				}
-				else if (browser != null && (browser.equalsIgnoreCase("ie") || browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
-					return getRemoteDriver(new URL(url), getInternetExplorerCapabilities(language));
-				}
-				else if (browser != null && browser.equalsIgnoreCase("opera")) {
-					return getRemoteDriver(new URL(url), getOperaCapabilities(language));
-				}
-				else if (browser != null && browser.equalsIgnoreCase("safari")) {
-					return getRemoteDriver(new URL(url), getSafariCapabilities(language));
-				}
-				else {
-					return getRemoteDriver(new URL(url), getFirefoxCapabilities(language));
-				}
-			}
-		}
-		
 		@SuppressWarnings("unchecked")
-		private void run(WebDriver driver, SeleneseTestCase testCase, ExecutionContext context) throws EvaluationException, IOException {
+		private void run(WebDriver driver, SeleneseTestCase testCase, ExecutionContext context, boolean mustClose) throws EvaluationException, IOException {
 			maxWait = ScriptMethods.environment("selenium.server.timeout") == null ? 60000 : new Long(ScriptMethods.environment("selenium.server.url"));
 			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
 			SeleneseStep previousStep = null;
@@ -557,7 +521,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 				}
 			}
 			finally {
-				if (!closed) {
+				if (!closed && mustClose) {
 					driver.close();
 				}
 			}
@@ -680,5 +644,107 @@ public class SeleneseMethodProvider implements MethodProvider {
 			Arrays.asList(new ParameterDescription [] { new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream") } ),
 			new ArrayList<ParameterDescription>()));
 		return descriptions;
+	}
+	
+	private static DesiredCapabilities getSafariCapabilities(String language) {
+		DesiredCapabilities capabilities = DesiredCapabilities.safari();
+		return capabilities;
+	}
+	
+	private static  DesiredCapabilities getOperaCapabilities(String language) {
+		DesiredCapabilities capabilities = DesiredCapabilities.operaBlink();
+		return capabilities;
+	}
+	
+	private static DesiredCapabilities getFirefoxCapabilities(String language) {
+		DesiredCapabilities capabilities = DesiredCapabilities.firefox();
+		FirefoxProfile profile = new FirefoxProfile();
+		if (language != null) {
+			profile.setPreference("intl.accept_languages", language);
+		}
+		capabilities.setCapability(FirefoxDriver.PROFILE, profile);
+		return capabilities;
+	}
+	
+	private static WebDriver getFirefoxDriver(String language) {
+		return new FirefoxDriver(getFirefoxCapabilities(language));
+	}
+	
+	private static WebDriver getSafariDriver(String language) {
+		return new SafariDriver(getSafariCapabilities(language));
+	}
+	
+	private static WebDriver getOperaDriver(String language) {
+		return new OperaDriver(getOperaCapabilities(language));
+	}
+	
+	private static WebDriver getChromeDriver(String language) {
+		// if the system property is not set but you have it configured in the glue properties, push it to the system properties
+		if (System.getProperty("webdriver.chrome.driver") == null && ScriptMethods.environment("webdriver.chrome.driver") != null) {
+			System.setProperty("webdriver.chrome.driver", ScriptMethods.environment("webdriver.chrome.driver"));
+		}
+		return new ChromeDriver(getChromeCapabilities(language));
+	}
+	
+	private static WebDriver getInternetExplorerDriver(String language) {
+		return new InternetExplorerDriver(getInternetExplorerCapabilities(language));
+	}
+
+	private static DesiredCapabilities getInternetExplorerCapabilities(String language) {
+		DesiredCapabilities capabilities = DesiredCapabilities.internetExplorer();
+		return capabilities;
+	}
+	
+	private static DesiredCapabilities getChromeCapabilities(String language) {
+		DesiredCapabilities capabilities = DesiredCapabilities.chrome();
+		ChromeOptions co = new ChromeOptions();
+		if (language != null) {
+			co.addArguments("--lang=" + language);
+		}
+		capabilities.setCapability(ChromeOptions.CAPABILITY, co);
+		return capabilities;
+	}
+	
+	protected static WebDriver getRemoteDriver(URL url, DesiredCapabilities capabilities) {
+		return new RemoteWebDriver(url, capabilities);
+	}
+	
+	private static WebDriver getDriver(String browser, String language) throws MalformedURLException {
+		String url = ScriptMethods.environment("selenium.server.url");
+		// local execution
+		if (url == null) {
+			if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
+				return getChromeDriver(language);
+			}
+			else if (browser != null && (browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
+				return getInternetExplorerDriver(language);
+			}
+			else if (browser != null && browser.equalsIgnoreCase("opera")) {
+				return getOperaDriver(language);
+			}
+			else if (browser != null && browser.equalsIgnoreCase("safari")) {
+				return getSafariDriver(language);
+			}
+			else {
+				return getFirefoxDriver(language);
+			}
+		}
+		else {
+			if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
+				return getRemoteDriver(new URL(url), getChromeCapabilities(language));
+			}
+			else if (browser != null && (browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
+				return getRemoteDriver(new URL(url), getInternetExplorerCapabilities(language));
+			}
+			else if (browser != null && browser.equalsIgnoreCase("opera")) {
+				return getRemoteDriver(new URL(url), getOperaCapabilities(language));
+			}
+			else if (browser != null && browser.equalsIgnoreCase("safari")) {
+				return getRemoteDriver(new URL(url), getSafariCapabilities(language));
+			}
+			else {
+				return getRemoteDriver(new URL(url), getFirefoxCapabilities(language));
+			}
+		}
 	}
 }
