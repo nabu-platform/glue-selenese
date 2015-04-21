@@ -64,12 +64,9 @@ import be.nabu.glue.impl.SimpleParameterDescription;
 import be.nabu.glue.impl.methods.ScriptMethods;
 import be.nabu.glue.impl.methods.TestMethods;
 import be.nabu.libs.evaluator.EvaluationException;
-import be.nabu.libs.evaluator.QueryPart;
-import be.nabu.libs.evaluator.QueryPart.Type;
 import be.nabu.libs.evaluator.annotations.MethodProviderClass;
 import be.nabu.libs.evaluator.api.Operation;
-import be.nabu.libs.evaluator.api.OperationProvider.OperationType;
-import be.nabu.libs.evaluator.base.BaseOperation;
+import be.nabu.libs.evaluator.base.BaseMethodOperation;
 
 /**
  * To run it remotely, I first tried the root URL: http://my-server:4444
@@ -95,6 +92,10 @@ public class SeleneseMethodProvider implements MethodProvider {
 		}
 		else if (name.equalsIgnoreCase("webdriver") || name.equalsIgnoreCase("selenium.webdriver")) {
 			return new WebDriverOperation();
+		}
+		// perform an action on a driver, e.g. selenium.click(driver, ...)
+		else if (name.matches("^selenium\\.[\\w]+$")) {
+			return new SeleneseStepOperation(name.substring("selenium.".length()));
 		}
 		return null;
 	}
@@ -122,7 +123,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 		transformer.transform(new StreamSource(xml), new StreamResult(result));
 	}
 	
-	public static class WebDriverOperation extends BaseOperation<ExecutionContext> {
+	public static class WebDriverOperation extends BaseMethodOperation<ExecutionContext> {
 
 		@Override
 		public void finish() throws ParseException {
@@ -146,14 +147,53 @@ public class SeleneseMethodProvider implements MethodProvider {
 				throw new EvaluationException(e);
 			}
 		}
-
+	}
+	
+	public static class SeleneseStepOperation extends SeleneseOperation {
+		
+		private String action;
+		
+		public SeleneseStepOperation(String action) {
+			this.action = action;
+		}
+		
+		@SuppressWarnings({ "rawtypes", "unchecked" })
 		@Override
-		public OperationType getType() {
-			return OperationType.METHOD;
+		public Object evaluate(ExecutionContext context) throws EvaluationException {
+			List arguments = new ArrayList();
+			for (int i = 1; i < getParts().size(); i++) {
+				Operation<ExecutionContext> argumentOperation = (Operation<ExecutionContext>) getParts().get(i).getContent();
+				arguments.add(argumentOperation.evaluate(context));
+			}
+			if (arguments.size() < 1) {
+				throw new EvaluationException("Need at least a webdriver parameter");
+			}
+			else if (!(arguments.get(0) instanceof WrappedDriver)) {
+				throw new EvaluationException("The first parameter must be a webdriver");
+			}
+			WebDriver driver = arguments.get(0) instanceof WebDriver ? (WebDriver) arguments.get(0) : ((WrappedDriver) arguments.get(0)).getDriver();
+			SeleneseTestCase testCase = new SeleneseTestCase();
+			testCase.setTarget("localhost");
+			SeleneseStep step = new SeleneseStep();
+			step.setAction(action);
+			if (arguments.size() >= 2) {
+				step.setTarget((String) arguments.get(1));
+			}
+			if (arguments.size() >= 3) {
+				step.setContent((String) arguments.get(2));
+			}
+			testCase.getSteps().add(step);
+			try {
+				run(driver, testCase, context, false);
+				return true;
+			}
+			catch (IOException e) {
+				throw new EvaluationException(e);
+			}
 		}
 	}
 	
-	public static class SeleneseOperation extends BaseOperation<ExecutionContext> {
+	public static class SeleneseOperation extends BaseMethodOperation<ExecutionContext> {
 
 		private long sleep = 10000, maxWait;
 		
@@ -164,29 +204,6 @@ public class SeleneseMethodProvider implements MethodProvider {
 			// do nothing
 		}
 
-		@Override
-		public String toString() {
-			StringBuilder builder = new StringBuilder();
-			// first the method name
-			builder.append((String) getParts().get(0).getContent());
-			// then the rest
-			builder.append("(");
-			for (int i = 1; i < getParts().size(); i++) {
-				QueryPart part = getParts().get(i);
-				if (i > 1) {
-					builder.append(", ");
-				}
-				if (part.getType() == Type.STRING) {
-					builder.append("\"" + part.getContent().toString() + "\"");
-				}
-				else {
-					builder.append(part.getContent() == null ? "null" : part.getContent().toString());
-				}
-			}
-			builder.append(")");
-			return builder.toString();
-		}
-		
 		@SuppressWarnings({ "rawtypes", "unchecked" })
 		@Override
 		public Object evaluate(ExecutionContext context) throws EvaluationException {
@@ -238,7 +255,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 		}
 		
 		@SuppressWarnings("unchecked")
-		private void run(WebDriver driver, SeleneseTestCase testCase, ExecutionContext context, boolean mustClose) throws EvaluationException, IOException {
+		protected void run(WebDriver driver, SeleneseTestCase testCase, ExecutionContext context, boolean mustClose) throws EvaluationException, IOException {
 			maxWait = ScriptMethods.environment("selenium.server.timeout") == null ? 60000 : new Long(ScriptMethods.environment("selenium.server.url"));
 			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
 			SeleneseStep previousStep = null;
@@ -575,16 +592,11 @@ public class SeleneseMethodProvider implements MethodProvider {
 				throw new EvaluationException(e);
 			}
 		}
-
-		@Override
-		public OperationType getType() {
-			return OperationType.METHOD;
-		}
 	}
 	
 	@XmlRootElement(name = "testCase", namespace = "http://nabu.be/glue/selenese")
 	public static class SeleneseTestCase {
-		private List<SeleneseStep> steps;
+		private List<SeleneseStep> steps = new ArrayList<SeleneseStep>();
 		private String target;
 
 		@XmlElement(name = "step", namespace = "http://nabu.be/glue/selenese")
@@ -641,7 +653,17 @@ public class SeleneseMethodProvider implements MethodProvider {
 	public List<MethodDescription> getAvailableMethods() {
 		List<MethodDescription> descriptions = new ArrayList<MethodDescription>();
 		descriptions.add(new SimpleMethodDescription("selenium", "selenese", "This will run a selenese script created using the selenium IDE",
-			Arrays.asList(new ParameterDescription [] { new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream") } ),
+			Arrays.asList(new ParameterDescription [] { 
+				new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream"),
+				new SimpleParameterDescription("target", "You can pass in either a webdriver instance (created with webdriver()) or a target browser (e.g. firefox) as the second parameter", "WebDriver, String"),
+				new SimpleParameterDescription("language", "If you have passed in the name of the browser as the second parameter, you can optionally pass in a language setting as well", "String")
+			}),
+			new ArrayList<ParameterDescription>()));
+		descriptions.add(new SimpleMethodDescription("selenium", "webdriver", "Returns a webdriver that can be used to run selenese() on",
+			Arrays.asList(new ParameterDescription [] { 
+				new SimpleParameterDescription("browser", "You can pass in the name of the target browser (e.g. firefox) as the second parameter", "WebDriver, String"),
+				new SimpleParameterDescription("language", "If you have passed in the name of the browser as the second parameter, you can optionally pass in a language setting as well", "String")
+			}),
 			new ArrayList<ParameterDescription>()));
 		return descriptions;
 	}
