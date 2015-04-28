@@ -501,7 +501,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 							String text = attribute == null ? element.getText() : element.getAttribute(attribute);
 							String validateMessage = lastComment == null ? "Verify presence of " + type + " in " + step.getTarget() : lastComment;
 							lastComment = null;
-							if (step.getTarget().contains("*")) {
+							if (step.getContent().contains("*")) {
 								boolean matches = text.matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*");
 								TestMethods.check(validateMessage, matches, matches ? step.getContent() : text + " !~ " + step.getContent(), fail);
 							}
