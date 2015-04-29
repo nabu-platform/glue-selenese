@@ -36,6 +36,7 @@ import javax.xml.transform.stream.StreamSource;
 
 import org.openqa.selenium.Alert;
 import org.openqa.selenium.By;
+import org.openqa.selenium.Keys;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.WebDriver;
@@ -442,17 +443,37 @@ public class SeleneseMethodProvider implements MethodProvider {
 						else {
 							presenceOfElementLocated = ExpectedConditions.presenceOfElementLocated(by);
 						}
-						
 						WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
 						wait.until(presenceOfElementLocated);
 						
 						WebElement element = driver.findElement(by);
-						// you are requesting a file upload
 						if (element == null) {
 							throw new EvaluationException("Can not find element " + by);
 						}
 						if (step.getAction().equalsIgnoreCase("type")) {
-							element.clear();
+							// as asked here: http://stackoverflow.com/questions/29919576/selenium-element-clear-triggers-javascript-before-sendkeys
+							// and found here: http://stackoverflow.com/questions/19833728/webelement-clear-fires-javascript-change-event-alternatives
+							// logged as a "works as designed" bug here: https://code.google.com/p/selenium/issues/detail?id=214
+							// the clear() actually triggers an onchange event
+							// a number of controls (e.g. vaadin) use the onchange event and the fact that the field is now empty to fill in for example an empty template
+							// e.g. a date field would be filled in with the format of said field
+							// in our case a clear() + sendKeys("2015/04/29") actually resulted in "yyyy/MM/dd2015/04/29" because after the clear() the template was automatically inserted
+							// so for input stuff we don't send a clear()
+							if (!element.getTagName().equalsIgnoreCase("input")) {
+								element.clear();
+							}
+							else {
+								// instead we send enough backspaces to delete the content
+								Actions navigator = new Actions(driver);
+							    navigator.click(element)
+							        .sendKeys(Keys.END)
+							        .keyDown(Keys.SHIFT)
+							        .sendKeys(Keys.HOME)
+							        .keyUp(Keys.SHIFT)
+							        .sendKeys(Keys.BACK_SPACE)
+							        .perform();
+							}
+							// you are requesting a file upload
 							if (element.getTagName().equalsIgnoreCase("input") && element.getAttribute("type").equalsIgnoreCase("file")) {
 								String fileName = step.getContent().replaceAll(".*[\\\\/]+([^\\\\/]+)$", "$1");
 								InputStream content = find(fileName);
