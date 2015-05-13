@@ -40,6 +40,7 @@ import org.openqa.selenium.Keys;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.TakesScreenshot;
+import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -478,8 +479,20 @@ public class SeleneseMethodProvider implements MethodProvider {
 							else {
 								presenceOfElementLocated = ExpectedConditions.presenceOfElementLocated(by);
 							}
-							WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
-							wait.until(presenceOfElementLocated);
+							
+							try {
+								WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+								wait.until(presenceOfElementLocated);
+							}
+							catch (TimeoutException e) {
+								// in the case of a timeout and you simply put verify or iselement present
+								if (step.getAction().equalsIgnoreCase("verifyElementPresent") || step.getAction().equalsIgnoreCase("isElementPresent")) {
+									TestMethods.check(lastComment, false, "false", false);
+									lastComment = null;
+									continue;
+								}
+								throw e;
+							}
 							
 							// commands that work on multiple elements
 							if (step.getAction().equalsIgnoreCase("assertXpathCount") || step.getAction().equalsIgnoreCase("verifyXpathCount")) {
@@ -572,8 +585,10 @@ public class SeleneseMethodProvider implements MethodProvider {
 									driver.findElement(by).sendKeys("");
 									action.doubleClick(element).perform();
 								}
-								else if (step.getAction().equalsIgnoreCase("waitForElementPresent") || step.getAction().equalsIgnoreCase("verifyElementPresent")) {
+								else if (step.getAction().equalsIgnoreCase("waitForElementPresent") || step.getAction().equalsIgnoreCase("verifyElementPresent") || step.getAction().equalsIgnoreCase("isElementPresent") || step.getAction().equalsIgnoreCase("assertElementPresent")) {
 									// we already waited for the element, so keep going
+									TestMethods.check(lastComment, true, "true", false);
+									lastComment = null;
 								}
 								else if (step.getAction().equalsIgnoreCase("verifyText") || step.getAction().equalsIgnoreCase("assertText") || step.getAction().equalsIgnoreCase("verifyAttribute") || step.getAction().equalsIgnoreCase("assertAttribute")) {
 									boolean fail = step.getAction().startsWith("assert");
