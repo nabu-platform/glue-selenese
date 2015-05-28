@@ -471,27 +471,30 @@ public class SeleneseMethodProvider implements MethodProvider {
 							}
 						}
 						else {
-							ExpectedCondition<?> presenceOfElementLocated;
+							ExpectedCondition<?> presenceOfElementLocated = null;
 							
-							if (step.getAction().equalsIgnoreCase("waitForElementNotPresent")) {
-								presenceOfElementLocated = ExpectedConditions.not(ExpectedConditions.presenceOfElementLocated(by));
+							if (step.getAction().equalsIgnoreCase("waitForElementNotPresent") || ((step.getAction().matches("(assert|validate)XpathCount") && "0".equals(step.getContent())))) {
+								if (!driver.findElements(by).isEmpty()) {
+									presenceOfElementLocated = ExpectedConditions.not(ExpectedConditions.presenceOfElementLocated(by));
+								}
 							}
 							else {
 								presenceOfElementLocated = ExpectedConditions.presenceOfElementLocated(by);
 							}
-							
-							try {
-								WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
-								wait.until(presenceOfElementLocated);
-							}
-							catch (TimeoutException e) {
-								// in the case of a timeout and you simply put verify or iselement present
-								if (step.getAction().equalsIgnoreCase("verifyElementPresent") || step.getAction().equalsIgnoreCase("isElementPresent")) {
-									TestMethods.check(lastComment, false, "false", false);
-									lastComment = null;
-									continue;
+							if (presenceOfElementLocated != null) {
+								try {
+									WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+									wait.until(presenceOfElementLocated);
 								}
-								throw e;
+								catch (TimeoutException e) {
+									// in the case of a timeout and you simply put verify or iselement present
+									if (step.getAction().equalsIgnoreCase("verifyElementPresent") || step.getAction().equalsIgnoreCase("isElementPresent")) {
+										TestMethods.check(lastComment, false, "false", false);
+										lastComment = null;
+										continue;
+									}
+									throw e;
+								}
 							}
 							
 							// commands that work on multiple elements
