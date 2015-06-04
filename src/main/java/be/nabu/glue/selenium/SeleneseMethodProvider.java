@@ -673,17 +673,17 @@ public class SeleneseMethodProvider implements MethodProvider {
 				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
 				InputStream xsl = getClass().getClassLoader().getResourceAsStream("selenese2xml.xslt");
 				// remove the doctype in the header, it crashes some code
-				xml = new ByteArrayInputStream(new String(ScriptMethods.bytes(xml), charset).replaceFirst("<!DOCTYPE[^>]+>", "").getBytes(charset));
+				String originalContent = new String(ScriptMethods.bytes(xml), charset).replaceFirst("<!DOCTYPE[^>]+>", "");
+				originalContent = ScriptRuntime.getRuntime().getScript().getParser().substitute(originalContent, context, true);
+				xml = new ByteArrayInputStream(originalContent.getBytes(charset));
 				if (xsl == null) {
 					throw new RuntimeException("Can not find the file selenese2xml.xslt");
 				}
 				ByteArrayOutputStream output = new ByteArrayOutputStream();
 				transform(xml, xsl, output);
-				String string = new String(output.toByteArray(), charset);
 				// in selenium you can make use of variables while running, so allow null for now
-				string = ScriptRuntime.getRuntime().getScript().getParser().substitute(string, context, true);
 				JAXBContext jaxb = JAXBContext.newInstance(SeleneseTestCase.class);
-				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(string.getBytes(charset))));
+				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(output.toByteArray())));
 			}
 			catch (TransformerFactoryConfigurationError e) {
 				throw new EvaluationException(e);
