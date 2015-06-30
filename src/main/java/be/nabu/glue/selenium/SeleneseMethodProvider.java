@@ -538,14 +538,30 @@ public class SeleneseMethodProvider implements MethodProvider {
 										element.clear();
 									}
 									else {
-										// instead we send enough backspaces to delete the content
+										// for older selenium versions (2.43.1) and/or older versions of firefox (27) the second delete statement does _not_ work (it does work on selenium 2.45 and firefox 36.0.1)
+										// after trying many combinations with ctrl+a etc, this proved to be the only one that works
+										// note that element.getText() appears to send back an empty string in this version combination so we had to resort to the value attribute which should available for all input elements
+										// As seen: http://stackoverflow.com/questions/13721213/gettext-returns-a-blank-in-selenium-even-if-the-text-is-not-hidden-tried-javas
+										// note that an alternative would be getAttribute("innerHTML")
+										Keys [] keys = new Keys[element.getAttribute("value").length()];
+										for (int i = 0; i < keys.length; i++) {
+											keys[i] = Keys.BACK_SPACE;
+										}
 										Actions navigator = new Actions(driver);
+										navigator.click(element)
+											.sendKeys(Keys.END)
+											.sendKeys(Keys.chord(keys))
+											.build()
+											.perform();
+										// currently leaving this delete action in there
+										navigator = new Actions(driver);
 									    navigator.click(element)
 									        .sendKeys(Keys.END)
 									        .keyDown(Keys.SHIFT)
 									        .sendKeys(Keys.HOME)
 									        .keyUp(Keys.SHIFT)
 									        .sendKeys(Keys.BACK_SPACE)
+									        .build()
 									        .perform();
 									}
 									// you are requesting a file upload
