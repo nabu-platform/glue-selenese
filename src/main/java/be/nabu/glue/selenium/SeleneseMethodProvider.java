@@ -83,6 +83,8 @@ import be.nabu.libs.evaluator.base.BaseMethodOperation;
  * 			http://my-server:4444/wd/hub
  * 
  * It takes a while to do the initial connect but after that it's fast.
+ * 
+ * Note that the reference documentation is available at http://release.seleniumhq.org/selenium-core/1.0.1/reference.html
  */
 @MethodProviderClass(namespace = "selenium")
 public class SeleneseMethodProvider implements MethodProvider {
@@ -197,7 +199,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 	
 	public static class SeleneseOperation extends BaseMethodOperation<ExecutionContext> {
 
-		private long sleep = 10000, maxWait;
+		private long timeout = 10000, sleep, maxWait;
 		
 		private List<File> temporaryFiles = new ArrayList<File>();
 		
@@ -342,8 +344,13 @@ public class SeleneseMethodProvider implements MethodProvider {
 						else if (step.getAction().equalsIgnoreCase("waitForFrameToLoad")) {
 							// TODO
 						}
+						// the timeout is used for "wait*" and "open*" methods, it is expressed in milliseconds
+						else if (step.getAction().equalsIgnoreCase("setTimeout")) {
+							this.timeout = new Long(step.getTarget());
+						}
+						// the speed is used to wait after every step executed, it is expressed in milliseconds 
 						else if (step.getAction().equalsIgnoreCase("setSpeed")) {
-							this.sleep = new Long(step.getTarget()) * 1000;
+							this.sleep = new Long(step.getTarget());
 						}
 						else if (step.getAction().equalsIgnoreCase("close")) {
 							driver.close();
@@ -378,7 +385,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 						else if (step.getAction().equalsIgnoreCase("selectWindow")) {
 							if (previousStep != null && previousStep.getAction().equalsIgnoreCase("waitForPopup")) {
-								WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+								WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
 								wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(step.getTarget()));
 							}
 							else {
@@ -445,9 +452,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 							if (step.getAction().equalsIgnoreCase("waitForText") || step.getAction().equalsIgnoreCase("waitForNotText")) {
 								Date waitStart = new Date();
 								boolean succeeded = false;
-								while (!succeeded && new Date().getTime() - waitStart.getTime() < this.sleep) {
+								while (!succeeded && new Date().getTime() - waitStart.getTime() < this.timeout) {
 									ExpectedCondition<?> presenceOfElementLocated = ExpectedConditions.presenceOfElementLocated(by);
-									WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+									WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
 									wait.until(presenceOfElementLocated);
 									try {
 										WebElement element = driver.findElement(by);
@@ -483,7 +490,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 								}
 								if (presenceOfElementLocated != null) {
 									try {
-										WebDriverWait wait = new WebDriverWait(driver, this.sleep / 1000);
+										WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
 										wait.until(presenceOfElementLocated);
 									}
 									catch (TimeoutException e) {
@@ -633,7 +640,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 									else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
 										element.click();
 										try {
-											Thread.sleep(step.getContent() == null || step.getContent().isEmpty() ? this.sleep : new Long(step.getContent()));
+											Thread.sleep(step.getContent() == null || step.getContent().isEmpty() ? this.timeout : new Long(step.getContent()));
 										}
 										catch (InterruptedException e) {
 											// continue
@@ -654,6 +661,14 @@ public class SeleneseMethodProvider implements MethodProvider {
 							}
 						}
 						previousStep = step;
+						if (sleep > 0) {
+							try {
+								Thread.sleep(sleep);
+							}
+							catch (InterruptedException e) {
+								// continue
+							}
+						}
 					}
 					catch (Exception e) {
 						throw new EvaluationException("Failed to execute step: " + step, e);
