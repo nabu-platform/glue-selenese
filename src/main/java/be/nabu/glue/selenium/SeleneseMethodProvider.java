@@ -816,6 +816,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 		if (language != null) {
 			profile.setPreference("intl.accept_languages", language);
 		}
+		profile.setPreference("startup.homepage_welcome_url.additional", "");
 		capabilities.setCapability(FirefoxDriver.PROFILE, profile);
 		return capabilities;
 	}
