@@ -817,6 +817,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 			profile.setPreference("intl.accept_languages", language);
 		}
 		profile.setPreference("startup.homepage_welcome_url.additional", "");
+		// in firefox 43, they enabled signatures for plugins
+		// this is also fixed in firefox driver version 2.48
+		profile.setPreference("xpinstall.signatures.required", false);
 		capabilities.setCapability(FirefoxDriver.PROFILE, profile);
 		return capabilities;
 	}
