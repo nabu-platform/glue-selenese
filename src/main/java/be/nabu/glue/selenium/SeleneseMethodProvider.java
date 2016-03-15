@@ -863,7 +863,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 		return capabilities;
 	}
 	
-	protected static WebDriver getRemoteDriver(URL url, DesiredCapabilities capabilities) {
+	public static WebDriver getRemoteDriver(URL url, DesiredCapabilities capabilities) {
 		return new RemoteWebDriver(url, capabilities);
 	}
 	
