@@ -107,9 +107,11 @@ public class SeleneseMethodProvider implements MethodProvider {
 	public static class WrappedDriver implements Closeable {
 		
 		private WebDriver driver;
+		private Closeable[] closeables;
 		
-		public WrappedDriver(WebDriver driver) {
+		public WrappedDriver(WebDriver driver, Closeable...closeables) {
 			this.driver = driver;
+			this.closeables = closeables;
 		}
 
 		public WebDriver getDriver() {
@@ -118,7 +120,21 @@ public class SeleneseMethodProvider implements MethodProvider {
 
 		@Override
 		public void close() {
-			driver.close();
+			try {
+				driver.quit();
+				driver.close();
+			}
+			catch (Exception e) {
+				// do nothing
+			}
+			for (Closeable closeable : closeables) {
+				try {
+					closeable.close();
+				}
+				catch (Exception e) {
+					// do nothing
+				}
+			}
 		}
 	}
 	
