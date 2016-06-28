@@ -54,6 +54,7 @@ import org.openqa.selenium.remote.RemoteWebDriver;
 import org.openqa.selenium.safari.SafariDriver;
 import org.openqa.selenium.support.ui.ExpectedCondition;
 import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.Select;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
 import be.nabu.glue.ScriptRuntime;
@@ -669,6 +670,28 @@ public class SeleneseMethodProvider implements MethodProvider {
 										Actions action = new Actions(driver);
 										String [] parts = step.getContent().split(",");
 										action.moveToElement(element, new Integer(parts[0]), parts.length > 1 ? new Integer(parts[1]) : 0).click().perform();
+									}
+									else if (step.getAction().equalsIgnoreCase("select")) {
+										Select select = new Select(element);
+										if (step.getContent() != null && !step.getContent().trim().isEmpty()) {
+											if (step.getContent().startsWith("value=")) {
+												select.selectByValue(step.getContent().substring("value=".length()));
+											}
+											// not supported for now...
+											else if (step.getContent().startsWith("id=")) {
+												throw new IllegalArgumentException("Currently the select by id does not work");
+											}
+											else if (step.getContent().startsWith("index=")) {
+												select.selectByIndex(Integer.parseInt(step.getContent().substring("index=".length())));
+											}
+											// by content (this is the default)
+											else if (step.getContent().startsWith("label=")) {
+												select.selectByVisibleText(step.getContent().substring("label=".length()));
+											}
+											else {
+												select.selectByVisibleText(step.getContent().trim());
+											}
+										}
 									}
 									else {
 										throw new EvaluationException("Unknown selenium command: " + step.getAction());
