@@ -355,6 +355,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 						else if (step.getAction().equalsIgnoreCase("windowMaximize")) {
 							driver.manage().window().maximize();
 						}
+						else if (step.getAction().equalsIgnoreCase("assertTitle")) {
+							TestMethods.check(lastComment, driver.getTitle().equals(step.getContent()), "Check if title is correct", false);
+						}
 						else if (step.getAction().equalsIgnoreCase("waitForPageToLoad")) {
 							// TODO
 						}
