@@ -565,7 +565,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 										if (!element.getTagName().equalsIgnoreCase("input")) {
 											element.clear();
 										}
-										else {
+										else if (element.getText() != null && !element.getText().isEmpty()) {
 											// for older selenium versions (2.43.1) and/or older versions of firefox (27) the second delete statement does _not_ work (it does work on selenium 2.45 and firefox 36.0.1)
 											// after trying many combinations with ctrl+a etc, this proved to be the only one that works
 											// note that element.getText() appears to send back an empty string in this version combination so we had to resort to the value attribute which should available for all input elements
