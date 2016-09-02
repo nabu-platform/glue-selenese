@@ -44,6 +44,7 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.firefox.FirefoxBinary;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxProfile;
 import org.openqa.selenium.ie.InternetExplorerDriver;
@@ -855,6 +856,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 	
 	private static DesiredCapabilities getFirefoxCapabilities(String language) {
 		DesiredCapabilities capabilities = DesiredCapabilities.firefox();
+		// use marionette?
+//		capabilities.setCapability("marionette", true);
 		FirefoxProfile profile = new FirefoxProfile();
 		if (language != null) {
 			profile.setPreference("intl.accept_languages", language);
