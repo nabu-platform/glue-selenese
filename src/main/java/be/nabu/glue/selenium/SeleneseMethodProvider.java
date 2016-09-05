@@ -403,7 +403,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 							Map<String, byte[]> screenshots = (Map<String, byte[]>) ScriptRuntime.getRuntime().getContext().get("screenshots");
 							ScriptRuntime.getRuntime().getExecutionContext().getPipeline().put("$screenshot" + screenshots.size(), screenshot);
 							if (step.getTarget() != null && !step.getTarget().isEmpty()) {
-								ScriptRuntime.getRuntime().getExecutionContext().getPipeline().put(step.getTarget(), screenshot);
+								ScriptRuntime.getRuntime().getExecutionContext().getPipeline().put(step.getTarget().replaceAll("[^\\w]+", "_"), screenshot);
 							}
 							screenshots.put(name.endsWith(".png") ? name : name + ".png", screenshot);
 						}
