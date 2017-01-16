@@ -44,6 +44,7 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.firefox.FirefoxBinary;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxProfile;
 import org.openqa.selenium.ie.InternetExplorerDriver;
@@ -857,6 +858,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 	}
 	
 	private static DesiredCapabilities getFirefoxCapabilities(String language) {
+		if (System.getProperty("webdriver.gecko.driver") == null && ScriptMethods.environment("webdriver.gecko.driver") != null) {
+			System.setProperty("webdriver.gecko.driver", ScriptMethods.environment("webdriver.gecko.driver"));
+		}
 		DesiredCapabilities capabilities = DesiredCapabilities.firefox();
 		// use marionette?
 //		capabilities.setCapability("marionette", true);
@@ -869,11 +873,15 @@ public class SeleneseMethodProvider implements MethodProvider {
 		// this is also fixed in firefox driver version 2.48
 		profile.setPreference("xpinstall.signatures.required", false);
 		capabilities.setCapability(FirefoxDriver.PROFILE, profile);
+		capabilities.setCapability("marionette", true);
 		return capabilities;
 	}
 	
 	private static WebDriver getFirefoxDriver(String language) {
-		return new FirefoxDriver(getFirefoxCapabilities(language));
+		DesiredCapabilities firefoxCapabilities = getFirefoxCapabilities(language);
+		return ScriptMethods.environment("webdriver.firefox.binary") == null
+			? new FirefoxDriver(firefoxCapabilities)
+			: new FirefoxDriver(new FirefoxBinary(new File(ScriptMethods.environment("webdriver.firefox.binary"))), (FirefoxProfile) firefoxCapabilities.getCapability(FirefoxDriver.PROFILE), firefoxCapabilities);
 	}
 	
 	private static WebDriver getSafariDriver(String language) {
