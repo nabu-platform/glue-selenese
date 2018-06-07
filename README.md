@@ -89,9 +89,7 @@ You can perform the execution [remotely](http://docs.seleniumhq.org/docs/07_sele
 
 You can explicitly force the use of firefox by specifying ``firefox`` as the browser.
 
-Firefox is the default browser unless otherwise specified. Apart from installing firefox, no additional action is required.
-
-**Note**: in the past some firefox updates have required an update to selenium, for example when switching to firefox 36. Currently tested up to 36.0.4. If you have a newer version of firefox and it's not working, update the selenium libraries.
+For firefox you need to download the [gecko driver](https://github.com/mozilla/geckodriver/releases) and configure a system property ``webdriver.gecko.driver`` that points to it.
 
 ### Chrome
 
