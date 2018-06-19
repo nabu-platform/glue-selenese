@@ -3,7 +3,6 @@ package be.nabu.glue.selenium;
 import io.github.bonigarcia.wdm.WebDriverManager;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -23,11 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.annotation.XmlAttribute;
-import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlRootElement;
-import javax.xml.bind.annotation.XmlValue;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
@@ -74,6 +69,12 @@ import be.nabu.libs.evaluator.EvaluationException;
 import be.nabu.libs.evaluator.annotations.MethodProviderClass;
 import be.nabu.libs.evaluator.api.Operation;
 import be.nabu.libs.evaluator.base.BaseMethodOperation;
+import be.nabu.libs.types.TypeUtils;
+import be.nabu.libs.types.api.ComplexContent;
+import be.nabu.libs.types.api.ComplexType;
+import be.nabu.libs.types.binding.api.Window;
+import be.nabu.libs.types.binding.json.JSONBinding;
+import be.nabu.libs.types.java.BeanResolver;
 
 /**
  * To run it remotely, I first tried the root URL: http://my-server:4444
@@ -166,8 +167,14 @@ public class SeleneseMethodProvider implements MethodProvider {
 			String browser = arguments.size() >= 1 && arguments.get(0) != null ? arguments.get(0).toString() : ScriptMethods.environment("selenium.browser");
 			String language = arguments.size() >= 2 && arguments.get(1) != null ? arguments.get(1).toString() : ScriptMethods.environment("selenium.language");
 			String url = arguments.size() >= 3 && arguments.get(2) != null ? arguments.get(2).toString() : ScriptMethods.environment("selenium.server.url");
+			
+			boolean headless = false;
+			if (browser.endsWith("-headless")) {
+				headless = true;
+				browser = browser.substring(0, browser.length() - "-headless".length());
+			}
 			try {
-				return new WrappedDriver(getDriver(browser, language, url));
+				return new WrappedDriver(getDriver(browser, language, url, headless));
 			}
 			catch (Exception e) {
 				throw new EvaluationException(e);
@@ -199,18 +206,17 @@ public class SeleneseMethodProvider implements MethodProvider {
 			}
 			WebDriver driver = arguments.get(0) instanceof WebDriver ? (WebDriver) arguments.get(0) : ((WrappedDriver) arguments.get(0)).getDriver();
 			SeleneseTestCase testCase = new SeleneseTestCase();
-			testCase.setTarget("localhost");
 			SeleneseStep step = new SeleneseStep();
-			step.setAction(action);
+			step.setCommand(action);
 			if (arguments.size() >= 2) {
 				step.setTarget((String) arguments.get(1));
 			}
 			if (arguments.size() >= 3) {
-				step.setContent((String) arguments.get(2));
+				step.setValue((String) arguments.get(2));
 			}
-			testCase.getSteps().add(step);
+			testCase.getCommands().add(step);
 			try {
-				run(driver, testCase, context, false);
+				run(driver, null, testCase, context, false);
 				return true;
 			}
 			catch (IOException e) {
@@ -238,39 +244,56 @@ public class SeleneseMethodProvider implements MethodProvider {
 				Operation<ExecutionContext> argumentOperation = (Operation<ExecutionContext>) getParts().get(i).getContent();
 				arguments.add(argumentOperation.evaluate(context));
 			}
-			if (arguments.size() == 0) {
-				arguments.add("testcase.html");
+			if (arguments.size() < 2) {
+				throw new IllegalArgumentException("Need at least two parameters: the webdriver instance and the file to run");
 			}
-			InputStream xml = null;
-			if (arguments.get(0) instanceof String) {
-				xml = find((String) arguments.get(0));
+			InputStream json = null;
+			if (arguments.get(1) instanceof String) {
+				json = find((String) arguments.get(1));
 			}
-			else if (arguments.get(0) instanceof byte[]) {
-				xml = new ByteArrayInputStream((byte []) arguments.get(0));
+			else if (arguments.get(1) instanceof byte[]) {
+				json = new ByteArrayInputStream((byte []) arguments.get(1));
 			}
-			else if (arguments.get(0) instanceof InputStream) {
-				xml = (InputStream) arguments.get(0);
+			else if (arguments.get(1) instanceof InputStream) {
+				json = (InputStream) arguments.get(1);
 			}
 			else {
-				throw new EvaluationException("Can not process " + arguments.get(0));
+				throw new EvaluationException("Can not process " + arguments.get(1));
 			}
 			try {
-				SeleneseTestCase testCase = parse(xml, context);
+				SeleneseTestFile testFile = parse(json, context);
 				
-				WebDriver driver = arguments.size() >= 2 && arguments.get(1) instanceof WrappedDriver
-					? ((WrappedDriver) arguments.get(1)).getDriver()
+				WebDriver driver = arguments.get(0) instanceof WrappedDriver
+					? ((WrappedDriver) arguments.get(0)).getDriver()
 					: null;
-				boolean mustClose = false;
-				// if there is no externally managed driver, create a new instance
-				// this instance is managed by this operation and must be closed at the end
-				if (driver == null) {
-					String browser = arguments.size() >= 2 && arguments.get(1) != null ? arguments.get(1).toString() : ScriptMethods.environment("selenium.browser");
-					String language = arguments.size() >= 3 && arguments.get(2) != null ? arguments.get(2).toString() : ScriptMethods.environment("selenium.language");
-					String url = arguments.size() >= 4 && arguments.get(3) != null ? arguments.get(3).toString() : ScriptMethods.environment("selenium.server.url");
-					driver = getDriver(browser, language, url);
-					mustClose = true;
+					
+				List<String> list = new ArrayList<String>();
+				for (int i = 2; i < arguments.size(); i++) {
+					Object testsToRun = arguments.get(i);
+					if (testsToRun instanceof String) {
+						list.add((String) testsToRun);
+					}
+					else if (testsToRun instanceof Iterable) {
+						for (String test : (Iterable<String>) testsToRun) {
+							list.add(test);
+						}
+					}
 				}
-				run(driver, testCase, context, mustClose);
+				List<SeleneseTestCase> tests = testFile.getTests();
+				if (list.isEmpty()) {
+					for (SeleneseTestCase test : tests) {
+						run(driver, testFile, test, context, false);
+					}
+				}
+				else {
+					for (String testToRun : list) {
+						for (SeleneseTestCase test : tests) {
+							if (test.getName().equals(testToRun)) {
+								run(driver, testFile, test, context, false);
+							}
+						}
+					}
+				}
 			}
 			catch (IOException e) {
 				throw new EvaluationException(e);
@@ -282,45 +305,45 @@ public class SeleneseMethodProvider implements MethodProvider {
 		}
 		
 		@SuppressWarnings("unchecked")
-		protected void run(WebDriver driver, SeleneseTestCase testCase, ExecutionContext context, boolean mustClose) throws EvaluationException, IOException {
+		protected void run(WebDriver driver, SeleneseTestFile testFile, SeleneseTestCase testCase, ExecutionContext context, boolean mustClose) throws EvaluationException, IOException {
 			maxWait = ScriptMethods.environment("selenium.server.timeout") == null ? 60000 : new Long(ScriptMethods.environment("selenium.server.url"));
-			String baseURL = testCase.getTarget().replaceAll("[/]+$", "");
+			String baseURL = testFile == null ? "" : testFile.getUrl().replaceAll("[/]+$", "");
 			SeleneseStep previousStep = null;
 			boolean closed = false;
 			try {
 				String lastComment = null;
-				for (SeleneseStep step : testCase.getSteps()) {
+				for (SeleneseStep step : testCase.getCommands()) {
 					try {
 						if (ScriptRuntime.getRuntime().isAborted()) {
 							break;
 						}
-						String message = step.getAction();
+						String message = step.getCommand();
 						if (step.getTarget() != null && !step.getTarget().isEmpty()) {
 							message += " @ " + step.getTarget();
 						}
-						if (step.getContent() != null && !step.getContent().isEmpty()) {
-							message += ": " + step.getContent();
+						if (step.getValue() != null && !step.getValue().isEmpty()) {
+							message += ": " + step.getValue();
 						}
 						if (ScriptRuntime.getRuntime().getExecutionContext().isDebug()) {
 							ScriptRuntime.getRuntime().getFormatter().print(message);
 						}
 						// the variables must be defined by now
-						if (step.getAction() != null) {
-							step.setAction(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getAction(), context, false));
+						if (step.getCommand() != null) {
+							step.setCommand(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getCommand(), context, false));
 						}
 						if (step.getTarget() != null) {
 							step.setTarget(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getTarget(), context, false));
 						}
-						if (step.getContent() != null) {
-							step.setContent(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getContent(), context, false));
+						if (step.getValue() != null) {
+							step.setValue(ScriptRuntime.getRuntime().getScript().getParser().substitute(step.getValue(), context, false));
 						}
-						if (step.getAction().equalsIgnoreCase("open")) {
+						if (step.getCommand().equalsIgnoreCase("open")) {
 							driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
 						}
-						else if (step.getAction().equalsIgnoreCase("echo")) {
+						else if (step.getCommand().equalsIgnoreCase("echo")) {
 							lastComment = step.getTarget();
 						}
-						else if (step.getAction().equalsIgnoreCase("waitForTextPresent")) {
+						else if (step.getCommand().equalsIgnoreCase("waitForTextPresent")) {
 							Date date = new Date();
 							while (!Thread.interrupted()) {
 								if (driver.getPageSource().contains(step.getTarget())) {
@@ -331,7 +354,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 								}
 							}
 						}
-						else if (step.getAction().equalsIgnoreCase("waitForTextNotPresent")) {
+						else if (step.getCommand().equalsIgnoreCase("waitForTextNotPresent")) {
 							Date date = new Date();
 							while (!Thread.interrupted()) {
 								if (!driver.getPageSource().contains(step.getTarget())) {
@@ -342,8 +365,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 								}
 							}
 						}
-						else if (step.getAction().equalsIgnoreCase("verifyTextPresent") || step.getAction().equalsIgnoreCase("assertTextPresent")) {
-							boolean fail = step.getAction().startsWith("assert");
+						else if (step.getCommand().equalsIgnoreCase("verifyTextPresent") || step.getCommand().equalsIgnoreCase("assertTextPresent")) {
+							boolean fail = step.getCommand().startsWith("assert");
 							String validateMessage = lastComment == null ? "Verify presence of text" : lastComment;
 							lastComment = null;
 							if (step.getTarget().contains("*")) {
@@ -353,41 +376,41 @@ public class SeleneseMethodProvider implements MethodProvider {
 								TestMethods.check(validateMessage, driver.getPageSource().contains(step.getTarget()), step.getTarget(), fail);
 							}
 						}
-						else if ((step.getContent() == null || step.getContent().isEmpty()) && (step.getAction().equalsIgnoreCase("verifyTextNotPresent") || step.getAction().equalsIgnoreCase("assertTextNotPresent"))) {
+						else if ((step.getValue() == null || step.getValue().isEmpty()) && (step.getCommand().equalsIgnoreCase("verifyTextNotPresent") || step.getCommand().equalsIgnoreCase("assertTextNotPresent"))) {
 							String validateMessage = lastComment == null ? "Verify absence of text" : lastComment;
 							lastComment = null;
-							TestMethods.check(validateMessage, !driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getAction().startsWith("assert"));
+							TestMethods.check(validateMessage, !driver.getPageSource().contains(step.getTarget()), step.getTarget(), step.getCommand().startsWith("assert"));
 						}
-						else if (step.getAction().equalsIgnoreCase("windowMaximize")) {
+						else if (step.getCommand().equalsIgnoreCase("windowMaximize")) {
 							driver.manage().window().maximize();
 						}
-						else if (step.getAction().equalsIgnoreCase("assertTitle")) {
+						else if (step.getCommand().equalsIgnoreCase("assertTitle")) {
 							boolean result = driver.getTitle().equals(step.getTarget());
 							TestMethods.check(lastComment, result, result ? "Check if title is correct" : "Check if title is correct: " + step.getTarget() + " != " + driver.getTitle(), false);
 						}
-						else if (step.getAction().equalsIgnoreCase("waitForPageToLoad")) {
+						else if (step.getCommand().equalsIgnoreCase("waitForPageToLoad")) {
 							// TODO
 						}
-						else if (step.getAction().equalsIgnoreCase("waitForFrameToLoad")) {
+						else if (step.getCommand().equalsIgnoreCase("waitForFrameToLoad")) {
 							// TODO
 						}
 						// the timeout is used for "wait*" and "open*" methods, it is expressed in milliseconds
-						else if (step.getAction().equalsIgnoreCase("setTimeout")) {
+						else if (step.getCommand().equalsIgnoreCase("setTimeout")) {
 							this.timeout = new Long(step.getTarget());
 						}
 						// the speed is used to wait after every step executed, it is expressed in milliseconds 
-						else if (step.getAction().equalsIgnoreCase("setSpeed")) {
+						else if (step.getCommand().equalsIgnoreCase("setSpeed")) {
 							this.sleep = new Long(step.getTarget());
 						}
-						else if (step.getAction().equalsIgnoreCase("close")) {
+						else if (step.getCommand().equalsIgnoreCase("close")) {
 							driver.close();
 							closed = true;
 							break;
 						}
-						else if (step.getAction().equalsIgnoreCase("waitForPopUp")) {
+						else if (step.getCommand().equalsIgnoreCase("waitForPopUp")) {
 							// do nothing
 						}
-						else if (step.getAction().equalsIgnoreCase("captureEntirePageScreenshot")) {
+						else if (step.getCommand().equalsIgnoreCase("captureEntirePageScreenshot")) {
 							String name = step.getTarget() != null && !step.getTarget().isEmpty() ? step.getTarget().replace('\\', '/').replaceAll(".*/", "") : UUID.randomUUID().toString();
 							byte [] screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
 							// if you are debugging, write the screenshots to file
@@ -413,8 +436,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 							}
 							screenshots.put(name.endsWith(".png") ? name : name + ".png", screenshot);
 						}
-						else if (step.getAction().equalsIgnoreCase("selectWindow")) {
-							if (previousStep != null && previousStep.getAction().equalsIgnoreCase("waitForPopup")) {
+						else if (step.getCommand().equalsIgnoreCase("selectWindow")) {
+							if (previousStep != null && previousStep.getCommand().equalsIgnoreCase("waitForPopup")) {
 								WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
 								wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(step.getTarget()));
 							}
@@ -422,7 +445,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 								driver.switchTo().window(step.getTarget().equals("null") ? null : step.getTarget());
 							}
 						}
-						else if (step.getAction().equalsIgnoreCase("assertConfirmation")) {
+						else if (step.getCommand().equalsIgnoreCase("assertConfirmation")) {
 							Alert alert = driver.switchTo().alert();
 							if (alert.getText().equals(step.getTarget())) {
 								alert.accept();
@@ -445,7 +468,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 									by = By.linkText(value);
 								}
 								else if (selector.equalsIgnoreCase("xpath")) {
-									if (step.getAction().equalsIgnoreCase("verifyAttribute") || step.getAction().equalsIgnoreCase("assertAttribute")) {
+									if (step.getCommand().equalsIgnoreCase("verifyAttribute") || step.getCommand().equalsIgnoreCase("assertAttribute")) {
 										int attributeLocation = value.lastIndexOf('@');
 										if (attributeLocation >= 0) {
 											attribute = value.substring(attributeLocation + 1);
@@ -479,7 +502,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 							// from time to time the code would be too fast as in, it would select the first element in the list but by the time it got to the code to actually click() it
 							// the javascript filter had removed said element from the dom triggering a disconnected element exception
 							// a wait for text in a specific element reselects the element and waits for it to appear there
-							if (step.getAction().equalsIgnoreCase("waitForText") || step.getAction().equalsIgnoreCase("waitForNotText")) {
+							if (step.getCommand().equalsIgnoreCase("waitForText") || step.getCommand().equalsIgnoreCase("waitForNotText")) {
 								Date waitStart = new Date();
 								boolean succeeded = false;
 								while (!succeeded && new Date().getTime() - waitStart.getTime() < this.timeout) {
@@ -488,13 +511,13 @@ public class SeleneseMethodProvider implements MethodProvider {
 									wait.until(presenceOfElementLocated);
 									try {
 										WebElement element = driver.findElement(by);
-										if (step.getContent().contains("*")) {
-											if (element.getText().matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*")) {
+										if (step.getValue().contains("*")) {
+											if (element.getText().matches(".*" + step.getValue().replaceAll("\\*", ".*") + ".*")) {
 												succeeded = true;
 											}
 										}
 										else {
-											if (element.getText().toLowerCase().contains(step.getContent().toLowerCase())) {
+											if (element.getText().toLowerCase().contains(step.getValue().toLowerCase())) {
 												succeeded = true;
 											}
 										}
@@ -504,13 +527,13 @@ public class SeleneseMethodProvider implements MethodProvider {
 									}
 								}
 								if (!succeeded) {
-									throw new EvaluationException("Failed to execute the command '" + step.getAction() + "' within the given timeframe");
+									throw new EvaluationException("Failed to execute the command '" + step.getCommand() + "' within the given timeframe");
 								}
 							}
 							else {
 								ExpectedCondition<?> presenceOfElementLocated = null;
 								
-								if (step.getAction().equalsIgnoreCase("waitForElementNotPresent") || ((step.getAction().matches("(assert|validate)XpathCount") && "0".equals(step.getContent())))) {
+								if (step.getCommand().equalsIgnoreCase("waitForElementNotPresent") || ((step.getCommand().matches("(assert|validate)XpathCount") && "0".equals(step.getValue())))) {
 									if (!driver.findElements(by).isEmpty()) {
 										presenceOfElementLocated = ExpectedConditions.not(ExpectedConditions.presenceOfElementLocated(by));
 									}
@@ -525,7 +548,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 									}
 									catch (TimeoutException e) {
 										// in the case of a timeout and you simply put verify or iselement present
-										if (step.getAction().equalsIgnoreCase("verifyElementPresent") || step.getAction().equalsIgnoreCase("isElementPresent")) {
+										if (step.getCommand().equalsIgnoreCase("verifyElementPresent") || step.getCommand().equalsIgnoreCase("isElementPresent")) {
 											TestMethods.check(lastComment, false, "false", false);
 											lastComment = null;
 											continue;
@@ -535,26 +558,26 @@ public class SeleneseMethodProvider implements MethodProvider {
 								}
 								
 								// commands that work on multiple elements
-								if (step.getAction().equalsIgnoreCase("assertXpathCount") || step.getAction().equalsIgnoreCase("verifyXpathCount")) {
+								if (step.getCommand().equalsIgnoreCase("assertXpathCount") || step.getCommand().equalsIgnoreCase("verifyXpathCount")) {
 									List<WebElement> findElements = driver.findElements(by);
 									String validateMessage = lastComment == null ? "Verify amount of items matching " + step.getTarget() : lastComment;
 									lastComment = null;
-									if (step.getAction().startsWith("assert")) {
-										TestMethods.confirmEquals(validateMessage, Integer.parseInt(step.getContent()), findElements.size());
+									if (step.getCommand().startsWith("assert")) {
+										TestMethods.confirmEquals(validateMessage, Integer.parseInt(step.getValue()), findElements.size());
 									}
 									else {
-										TestMethods.validateEquals(validateMessage, Integer.parseInt(step.getContent()), findElements.size());
+										TestMethods.validateEquals(validateMessage, Integer.parseInt(step.getValue()), findElements.size());
 									}
 								}
-								else if (step.getAction().equalsIgnoreCase("assertNotXpathCount") || step.getAction().equalsIgnoreCase("verifyNotXpathCount")) {
+								else if (step.getCommand().equalsIgnoreCase("assertNotXpathCount") || step.getCommand().equalsIgnoreCase("verifyNotXpathCount")) {
 									List<WebElement> findElements = driver.findElements(by);
 									String validateMessage = lastComment == null ? "Verify not amount of items matching " + step.getTarget() : lastComment;
 									lastComment = null;
-									if (step.getAction().startsWith("assert")) {
-										TestMethods.confirmNotEquals(validateMessage, Integer.parseInt(step.getContent()), findElements.size());
+									if (step.getCommand().startsWith("assert")) {
+										TestMethods.confirmNotEquals(validateMessage, Integer.parseInt(step.getValue()), findElements.size());
 									}
 									else {
-										TestMethods.validateNotEquals(validateMessage, Integer.parseInt(step.getContent()), findElements.size());
+										TestMethods.validateNotEquals(validateMessage, Integer.parseInt(step.getValue()), findElements.size());
 									}
 								}
 								else {
@@ -562,7 +585,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 									if (element == null) {
 										throw new EvaluationException("Can not find element " + by);
 									}
-									if (step.getAction().equalsIgnoreCase("type")) {
+									if (step.getCommand().equalsIgnoreCase("type")) {
 										// as asked here: http://stackoverflow.com/questions/29919576/selenium-element-clear-triggers-javascript-before-sendkeys
 										// and found here: http://stackoverflow.com/questions/19833728/webelement-clear-fires-javascript-change-event-alternatives
 										// logged as a "works as designed" bug here: https://code.google.com/p/selenium/issues/detail?id=214
@@ -603,7 +626,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 										}
 										// you are requesting a file upload
 										if (element.getTagName().equalsIgnoreCase("input") && element.getAttribute("type").equalsIgnoreCase("file")) {
-											String fileName = step.getContent().replaceAll(".*[\\\\/]+([^\\\\/]+)$", "$1");
+											String fileName = step.getValue().replaceAll(".*[\\\\/]+([^\\\\/]+)$", "$1");
 											InputStream content = find(fileName);
 											if (content == null) {
 												throw new FileNotFoundException("Could not find file " + fileName + " for upload");
@@ -629,85 +652,85 @@ public class SeleneseMethodProvider implements MethodProvider {
 											}
 										}
 										else {
-											element.sendKeys(step.getContent());
+											element.sendKeys(step.getValue());
 										}
 									}
-									else if (step.getAction().equalsIgnoreCase("storeText")) {
-										context.getPipeline().put(step.getContent(), element.getText());
+									else if (step.getCommand().equalsIgnoreCase("storeText")) {
+										context.getPipeline().put(step.getValue(), element.getText());
 									}
-									else if (step.getAction().equalsIgnoreCase("doubleClick")) {
+									else if (step.getCommand().equalsIgnoreCase("doubleClick")) {
 										Actions action = new Actions(driver);
 										// there is apparently a bug where you have to send this before the double click will work: http://stackoverflow.com/questions/25756876/selenium-webdriver-double-click-doesnt-work
 										driver.findElement(by).sendKeys("");
 										action.doubleClick(element).perform();
 									}
-									else if (step.getAction().equalsIgnoreCase("waitForElementPresent") || step.getAction().equalsIgnoreCase("verifyElementPresent") || step.getAction().equalsIgnoreCase("isElementPresent") || step.getAction().equalsIgnoreCase("assertElementPresent")) {
+									else if (step.getCommand().equalsIgnoreCase("waitForElementPresent") || step.getCommand().equalsIgnoreCase("verifyElementPresent") || step.getCommand().equalsIgnoreCase("isElementPresent") || step.getCommand().equalsIgnoreCase("assertElementPresent")) {
 										// we already waited for the element, so keep going
 										TestMethods.check(lastComment, true, "true", false);
 										lastComment = null;
 									}
-									else if (step.getAction().equalsIgnoreCase("verifyText") || step.getAction().equalsIgnoreCase("assertText") || step.getAction().equalsIgnoreCase("verifyAttribute") || step.getAction().equalsIgnoreCase("assertAttribute")) {
-										boolean fail = step.getAction().startsWith("assert");
-										String type = step.getAction().replaceAll("^(wait|verify|assert)", "").toLowerCase();
+									else if (step.getCommand().equalsIgnoreCase("verifyText") || step.getCommand().equalsIgnoreCase("assertText") || step.getCommand().equalsIgnoreCase("verifyAttribute") || step.getCommand().equalsIgnoreCase("assertAttribute")) {
+										boolean fail = step.getCommand().startsWith("assert");
+										String type = step.getCommand().replaceAll("^(wait|verify|assert)", "").toLowerCase();
 										String text = attribute == null ? element.getText() : element.getAttribute(attribute);
 										String validateMessage = lastComment == null ? "Verify presence of " + type + " in " + step.getTarget() : lastComment;
 										lastComment = null;
-										if (step.getContent().contains("*")) {
-											boolean matches = text.matches(".*" + step.getContent().replaceAll("\\*", ".*") + ".*");
-											TestMethods.check(validateMessage, matches, matches ? step.getContent() : text + " !~ " + step.getContent(), fail);
+										if (step.getValue().contains("*")) {
+											boolean matches = text.matches(".*" + step.getValue().replaceAll("\\*", ".*") + ".*");
+											TestMethods.check(validateMessage, matches, matches ? step.getValue() : text + " !~ " + step.getValue(), fail);
 										}
 										else {
-											boolean contains = text.toLowerCase().contains(step.getContent().toLowerCase());
-											TestMethods.check(validateMessage, contains, contains ? step.getContent() : text + " !# " + step.getContent(), fail);
+											boolean contains = text.toLowerCase().contains(step.getValue().toLowerCase());
+											TestMethods.check(validateMessage, contains, contains ? step.getValue() : text + " !# " + step.getValue(), fail);
 										}
 									}
-									else if (step.getAction().equalsIgnoreCase("verifyNotText") || step.getAction().equalsIgnoreCase("assertNotText") || step.getAction().equalsIgnoreCase("verifyNotAttribute") || step.getAction().equalsIgnoreCase("assertNotAttribute")) {
-										String type = step.getAction().replaceAll("^(verify|assert)Not", "").toLowerCase();
+									else if (step.getCommand().equalsIgnoreCase("verifyNotText") || step.getCommand().equalsIgnoreCase("assertNotText") || step.getCommand().equalsIgnoreCase("verifyNotAttribute") || step.getCommand().equalsIgnoreCase("assertNotAttribute")) {
+										String type = step.getCommand().replaceAll("^(verify|assert)Not", "").toLowerCase();
 										String validateMessage = lastComment == null ? "Verify presence of " + type + " in " + step.getTarget() : lastComment;
 										lastComment = null;
-										TestMethods.check(validateMessage, !element.getText().contains(step.getContent()), step.getContent(), step.getAction().startsWith("assert"));
+										TestMethods.check(validateMessage, !element.getText().contains(step.getValue()), step.getValue(), step.getCommand().startsWith("assert"));
 									}
-									else if (step.getAction().equalsIgnoreCase("clickAndWait")) {
+									else if (step.getCommand().equalsIgnoreCase("clickAndWait")) {
 										element.click();
 										try {
-											Thread.sleep(step.getContent() == null || step.getContent().isEmpty() ? this.timeout : new Long(step.getContent()));
+											Thread.sleep(step.getValue() == null || step.getValue().isEmpty() ? this.timeout : new Long(step.getValue()));
 										}
 										catch (InterruptedException e) {
 											// continue
 										}
 									}
-									else if (step.getAction().equalsIgnoreCase("click") || (step.getAction().equalsIgnoreCase("clickAt") && (step.getContent() == null || step.getContent().trim().isEmpty()))) {
+									else if (step.getCommand().equalsIgnoreCase("click") || (step.getCommand().equalsIgnoreCase("clickAt") && (step.getValue() == null || step.getValue().trim().isEmpty()))) {
 										element.click();
 									}
-									else if (step.getAction().equalsIgnoreCase("clickAt")) {
+									else if (step.getCommand().equalsIgnoreCase("clickAt")) {
 										Actions action = new Actions(driver);
-										String [] parts = step.getContent().split(",");
+										String [] parts = step.getValue().split(",");
 										action.moveToElement(element, new Integer(parts[0]), parts.length > 1 ? new Integer(parts[1]) : 0).click().perform();
 									}
-									else if (step.getAction().equalsIgnoreCase("select")) {
+									else if (step.getCommand().equalsIgnoreCase("select")) {
 										Select select = new Select(element);
-										if (step.getContent() != null && !step.getContent().trim().isEmpty()) {
-											if (step.getContent().startsWith("value=")) {
-												select.selectByValue(step.getContent().substring("value=".length()));
+										if (step.getValue() != null && !step.getValue().trim().isEmpty()) {
+											if (step.getValue().startsWith("value=")) {
+												select.selectByValue(step.getValue().substring("value=".length()));
 											}
 											// not supported for now...
-											else if (step.getContent().startsWith("id=")) {
+											else if (step.getValue().startsWith("id=")) {
 												throw new IllegalArgumentException("Currently the select by id does not work");
 											}
-											else if (step.getContent().startsWith("index=")) {
-												select.selectByIndex(Integer.parseInt(step.getContent().substring("index=".length())));
+											else if (step.getValue().startsWith("index=")) {
+												select.selectByIndex(Integer.parseInt(step.getValue().substring("index=".length())));
 											}
 											// by content (this is the default)
-											else if (step.getContent().startsWith("label=")) {
-												select.selectByVisibleText(step.getContent().substring("label=".length()));
+											else if (step.getValue().startsWith("label=")) {
+												select.selectByVisibleText(step.getValue().substring("label=".length()));
 											}
 											else {
-												select.selectByVisibleText(step.getContent().trim());
+												select.selectByVisibleText(step.getValue().trim());
 											}
 										}
 									}
 									else {
-										throw new EvaluationException("Unknown selenium command: " + step.getAction());
+										throw new EvaluationException("Unknown selenium command: " + step.getCommand());
 									}
 								}
 							}
@@ -755,65 +778,94 @@ public class SeleneseMethodProvider implements MethodProvider {
 			return xml;
 		}
 		
-		private SeleneseTestCase parse(InputStream xml, ExecutionContext context) throws EvaluationException, IOException {
+		public static SeleneseTestFile parse(InputStream xml, ExecutionContext context) throws EvaluationException, IOException {
 			try {
 				Charset charset = ScriptRuntime.getRuntime().getScript().getCharset();
-				InputStream xsl = getClass().getClassLoader().getResourceAsStream("selenese2xml.xslt");
-				// remove the doctype in the header, it crashes some code
-				String originalContent = new String(ScriptMethods.bytes(xml), charset).replaceFirst("<!DOCTYPE[^>]+>", "");
+				String originalContent = new String(ScriptMethods.bytes(xml), charset);
+				// in selenium you can make use of variables while running, so allow null for now
 				originalContent = ScriptRuntime.getRuntime().getScript().getParser().substitute(originalContent, context, true);
 				xml = new ByteArrayInputStream(originalContent.getBytes(charset));
-				if (xsl == null) {
-					throw new RuntimeException("Can not find the file selenese2xml.xslt");
-				}
-				ByteArrayOutputStream output = new ByteArrayOutputStream();
-				transform(xml, xsl, output);
-				// in selenium you can make use of variables while running, so allow null for now
-				JAXBContext jaxb = JAXBContext.newInstance(SeleneseTestCase.class);
-				return (SeleneseTestCase) jaxb.createUnmarshaller().unmarshal(new StreamSource(new ByteArrayInputStream(output.toByteArray())));
+				JSONBinding binding = new JSONBinding((ComplexType) BeanResolver.getInstance().resolve(SeleneseTestFile.class), charset);
+				binding.setIgnoreUnknownElements(true);
+				ComplexContent unmarshal = binding.unmarshal(xml, new Window[0]);
+				return TypeUtils.getAsBean(unmarshal, SeleneseTestFile.class);
 			}
 			catch (Exception e) {
-				throw new EvaluationException("Could not parse selenium HTML file", e);
+				throw new EvaluationException("Could not parse selenium JSON file", e);
 			}
 		}
 	}
+
+	@XmlRootElement(name = "testFile")
+	public static class SeleneseTestFile {
+		private String url, name, id;
+		private List<SeleneseTestCase> tests;
+		public String getUrl() {
+			return url;
+		}
+		public void setUrl(String url) {
+			this.url = url;
+		}
+		public String getName() {
+			return name;
+		}
+		public void setName(String name) {
+			this.name = name;
+		}
+		public String getId() {
+			return id;
+		}
+		public void setId(String id) {
+			this.id = id;
+		}
+		public List<SeleneseTestCase> getTests() {
+			return tests;
+		}
+		public void setTests(List<SeleneseTestCase> tests) {
+			this.tests = tests;
+		}
+	}
 	
-	@XmlRootElement(name = "testCase", namespace = "http://nabu.be/glue/selenese")
 	public static class SeleneseTestCase {
-		private List<SeleneseStep> steps = new ArrayList<SeleneseStep>();
-		private String target;
+		private List<SeleneseStep> commands = new ArrayList<SeleneseStep>();
+		private String name, id;
 
-		@XmlElement(name = "step", namespace = "http://nabu.be/glue/selenese")
-		public List<SeleneseStep> getSteps() {
-			return steps;
+		public List<SeleneseStep> getCommands() {
+			return commands;
 		}
 
-		public void setSteps(List<SeleneseStep> steps) {
-			this.steps = steps;
+		public void setCommands(List<SeleneseStep> commands) {
+			this.commands = commands;
 		}
 
-		@XmlAttribute
-		public String getTarget() {
-			return target;
+		public String getName() {
+			return name;
 		}
-		public void setTarget(String target) {
-			this.target = target;
+
+		public void setName(String name) {
+			this.name = name;
+		}
+
+		public String getId() {
+			return id;
+		}
+
+		public void setId(String id) {
+			this.id = id;
 		}
 	}
 	
 	public static class SeleneseStep {
-		private String action, target, content;
+		private String command, target, value, id, comment;
 
-		@XmlAttribute
-		public String getAction() {
-			return action;
+		public String getCommand() {
+			return command;
 		}
 
-		public void setAction(String action) {
-			this.action = action;
+		public void setCommand(String command) {
+			this.command = command;
 		}
 
-		@XmlAttribute
 		public String getTarget() {
 			return target;
 		}
@@ -822,13 +874,28 @@ public class SeleneseMethodProvider implements MethodProvider {
 			this.target = target;
 		}
 
-		@XmlValue
-		public String getContent() {
-			return content;
+		public String getValue() {
+			return value;
 		}
 
-		public void setContent(String content) {
-			this.content = content;
+		public void setValue(String value) {
+			this.value = value;
+		}
+
+		public String getId() {
+			return id;
+		}
+
+		public void setId(String id) {
+			this.id = id;
+		}
+
+		public String getComment() {
+			return comment;
+		}
+
+		public void setComment(String comment) {
+			this.comment = comment;
 		}
 		
 	}
@@ -837,10 +904,10 @@ public class SeleneseMethodProvider implements MethodProvider {
 	public List<MethodDescription> getAvailableMethods() {
 		List<MethodDescription> descriptions = new ArrayList<MethodDescription>();
 		descriptions.add(new SimpleMethodDescription("selenium", "selenese", "This will run a selenese script created using the selenium IDE",
-			Arrays.asList(new ParameterDescription [] { 
+			Arrays.asList(new ParameterDescription [] {
+				new SimpleParameterDescription("driver", "You must pass in a driver instance created with selenium.driver()", "webdriver"),
 				new SimpleParameterDescription("script", "You can pass in the name of the file that holds the selense or alternatively you can pass in byte[] or InputStream", "String, byte[], InputStream"),
-				new SimpleParameterDescription("target", "You can pass in either a webdriver instance (created with webdriver()) or a target browser (e.g. firefox) as the second parameter", "WebDriver, String"),
-				new SimpleParameterDescription("language", "If you have passed in the name of the browser as the second parameter, you can optionally pass in a language setting as well", "String")
+				new SimpleParameterDescription("tests", "The tests to run in the script", "String", true)
 			}),
 			new ArrayList<ParameterDescription>()));
 		descriptions.add(new SimpleMethodDescription("selenium", "webdriver", "Returns a webdriver that can be used to run selenese() on",
@@ -862,7 +929,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 		return capabilities;
 	}
 	
-	private static FirefoxOptions getFirefoxOptions(String language) {
+	private static FirefoxOptions getFirefoxOptions(String language, boolean headless) {
 		if (System.getProperty("webdriver.gecko.driver") == null && ScriptMethods.environment("webdriver.gecko.driver") != null) {
 			System.setProperty("webdriver.gecko.driver", ScriptMethods.environment("webdriver.gecko.driver"));
 		}
@@ -870,6 +937,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 //		capabilities.setCapability("marionette", true);
 		FirefoxProfile profile = getFirefoxProfile(language);
 		FirefoxOptions options = new FirefoxOptions();
+		options.setHeadless(headless);
 		options.setProfile(profile);
 		return options;
 	}
@@ -898,35 +966,35 @@ public class SeleneseMethodProvider implements MethodProvider {
 		return edge;
 	}
 	
-	private static WebDriver getEdgeDriver(String language) {
+	private static WebDriver getEdgeDriver(String language, boolean headless) {
 		WebDriverManager.edgedriver().setup();
 		return new EdgeDriver(getEdgeCapabilities(language));
 	}
 	
-	private static WebDriver getFirefoxDriver(String language) {
+	private static WebDriver getFirefoxDriver(String language, boolean headless) {
 		WebDriverManager.firefoxdriver().setup();
-		return new FirefoxDriver(getFirefoxOptions(language));
+		return new FirefoxDriver(getFirefoxOptions(language, headless));
 	}
 	
-	private static WebDriver getSafariDriver(String language) {
+	private static WebDriver getSafariDriver(String language, boolean headless) {
 		return new SafariDriver(getSafariCapabilities(language));
 	}
 	
-	private static WebDriver getOperaDriver(String language) {
+	private static WebDriver getOperaDriver(String language, boolean headless) {
 		WebDriverManager.operadriver().setup();
 		return new OperaDriver(getOperaCapabilities(language));
 	}
 	
-	private static WebDriver getChromeDriver(String language) {
+	private static WebDriver getChromeDriver(String language, boolean headless) {
 		WebDriverManager.chromedriver().setup();
 		// if the system property is not set but you have it configured in the glue properties, push it to the system properties
 		if (System.getProperty("webdriver.chrome.driver") == null && ScriptMethods.environment("webdriver.chrome.driver") != null) {
 			System.setProperty("webdriver.chrome.driver", ScriptMethods.environment("webdriver.chrome.driver"));
 		}
-		return new ChromeDriver(getChromeOptions(language));
+		return new ChromeDriver(getChromeOptions(language, headless));
 	}
 	
-	private static WebDriver getInternetExplorerDriver(String language) {
+	private static WebDriver getInternetExplorerDriver(String language, boolean headless) {
 		WebDriverManager.iedriver().setup();
 		return new InternetExplorerDriver(getInternetExplorerCapabilities(language));
 	}
@@ -936,17 +1004,27 @@ public class SeleneseMethodProvider implements MethodProvider {
 		return capabilities;
 	}
 	
-	private static ChromeOptions getChromeOptions(String language) {
+	private static ChromeOptions getChromeOptions(String language, boolean headless) {
 		ChromeOptions options = new ChromeOptions();
+		options.setHeadless(headless);
 		if (language != null) {
 			options.addArguments("--lang=" + language);
+		}
+		if (headless) {
+			options.addArguments("--headless");
+			options.addArguments("start-maximized");
+			options.addArguments("disable-infobars");
+			options.addArguments("--disable-extensions");
+			options.addArguments("--disable-gpu");
+			options.addArguments("--disable-dev-shm-usage");
+			options.addArguments("--no-sandbox");
 		}
 		return options;
 	}
 	
 	private static DesiredCapabilities getChromeCapabilities(String language) {
 		DesiredCapabilities capabilities = DesiredCapabilities.chrome();
-		capabilities.setCapability(ChromeOptions.CAPABILITY, getChromeOptions(language));
+		capabilities.setCapability(ChromeOptions.CAPABILITY, getChromeOptions(language, false));
 		return capabilities;
 	}
 	
@@ -954,29 +1032,33 @@ public class SeleneseMethodProvider implements MethodProvider {
 		return new RemoteWebDriver(url, capabilities);
 	}
 	
-	private static WebDriver getDriver(String browser, String language, String url) throws MalformedURLException {
+	private static WebDriver getDriver(String browser, String language, String url, boolean headless) throws MalformedURLException {
 		if (url == null) {
 			url = ScriptMethods.environment("selenium.server.url");
 		}
 		// local execution
 		if (url == null) {
+			// if we did not ask for headless but we are running on a headless system, switch
+			if (!headless) {
+				headless = java.awt.GraphicsEnvironment.isHeadless();
+			}
 			if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
-				return getChromeDriver(language);
+				return getChromeDriver(language, headless);
 			}
 			else if (browser != null && browser.toLowerCase().equals("edge")) {
-				return getEdgeDriver(language);
+				return getEdgeDriver(language, headless);
 			}
 			else if (browser != null && (browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
-				return getInternetExplorerDriver(language);
+				return getInternetExplorerDriver(language, headless);
 			}
 			else if (browser != null && browser.equalsIgnoreCase("opera")) {
-				return getOperaDriver(language);
+				return getOperaDriver(language, headless);
 			}
 			else if (browser != null && browser.equalsIgnoreCase("safari")) {
-				return getSafariDriver(language);
+				return getSafariDriver(language, headless);
 			}
 			else {
-				return getFirefoxDriver(language);
+				return getFirefoxDriver(language, headless);
 			}
 		}
 		else {

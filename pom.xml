@@ -29,6 +29,10 @@
 			<groupId>be.nabu.glue</groupId>
 			<artifactId>glue</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>be.nabu.libs.types</groupId>
+			<artifactId>types-binding-json</artifactId>
+		</dependency>
 		<!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-java -->
 		<dependency>
 		    <groupId>org.seleniumhq.selenium</groupId>
