@@ -340,6 +340,12 @@ public class SeleneseMethodProvider implements MethodProvider {
 						if (step.getCommand().equalsIgnoreCase("open")) {
 							driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
 						}
+						else if (step.getCommand().equalsIgnoreCase("store")) {
+							Object currentValue = context.getPipeline().get(step.getValue());
+							if (currentValue == null) {
+								context.getPipeline().put(step.getValue(), step.getTarget());
+							}
+						}
 						else if (step.getCommand().equalsIgnoreCase("echo")) {
 							lastComment = step.getTarget();
 						}
