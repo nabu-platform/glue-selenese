@@ -94,7 +94,7 @@ import be.nabu.libs.types.java.BeanResolver;
  */
 @MethodProviderClass(namespace = "selenium")
 public class SeleneseMethodProvider implements MethodProvider {
-	
+
 	@Override
 	public Operation<ExecutionContext> resolve(String name) {
 		if (name.equalsIgnoreCase("selenese") || name.equalsIgnoreCase("selenium.selenese")) {
@@ -227,6 +227,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 	
 	public static class SeleneseOperation extends BaseMethodOperation<ExecutionContext> {
 
+		private boolean workaroundForClear = false;
+		
 		private long timeout = 10000, sleep, maxWait;
 		
 		private List<File> temporaryFiles = new ArrayList<File>();
@@ -339,6 +341,14 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 						if (step.getCommand().equalsIgnoreCase("open")) {
 							driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
+						}
+						else if (step.getCommand().equalsIgnoreCase("pause")) {
+							if (step.getTarget() != null && step.getTarget().matches("[0-9]+")) {
+								Thread.sleep(Long.parseLong(step.getTarget()));
+							}
+							else {
+								Thread.sleep(timeout);
+							}
 						}
 						else if (step.getCommand().equalsIgnoreCase("store")) {
 							Object currentValue = context.getPipeline().get(step.getValue());
@@ -600,7 +610,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 										// e.g. a date field would be filled in with the format of said field
 										// in our case a clear() + sendKeys("2015/04/29") actually resulted in "yyyy/MM/dd2015/04/29" because after the clear() the template was automatically inserted
 										// so for input stuff we don't send a clear()
-										if (!element.getTagName().equalsIgnoreCase("input")) {
+										if (!workaroundForClear || !element.getTagName().equalsIgnoreCase("input")) {
 											element.clear();
 										}
 										else if (element.getText() != null && !element.getText().isEmpty()) {
