@@ -1,10 +1,13 @@
 package be.nabu.glue.selenium;
 
-import io.github.bonigarcia.wdm.WebDriverManager;
+import java.io.BufferedInputStream;
+
+//import io.github.bonigarcia.wdm.WebDriverManager;
 
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -13,14 +16,19 @@ import java.io.OutputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.text.ParseException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import javax.xml.bind.annotation.XmlRootElement;
 import javax.xml.transform.Transformer;
@@ -32,6 +40,7 @@ import javax.xml.transform.stream.StreamSource;
 
 import org.openqa.selenium.Alert;
 import org.openqa.selenium.By;
+import org.openqa.selenium.Dimension;
 import org.openqa.selenium.Keys;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.StaleElementReferenceException;
@@ -41,25 +50,36 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.devtools.DevTools;
+import org.openqa.selenium.devtools.v114.page.Page;
+import org.openqa.selenium.devtools.v114.page.Page.StartScreencastFormat;
+import org.openqa.selenium.devtools.v114.page.model.ScreencastFrame;
 import org.openqa.selenium.edge.EdgeDriver;
+import org.openqa.selenium.edge.EdgeOptions;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.firefox.FirefoxProfile;
 import org.openqa.selenium.ie.InternetExplorerDriver;
+import org.openqa.selenium.ie.InternetExplorerOptions;
 import org.openqa.selenium.interactions.Actions;
-import org.openqa.selenium.opera.OperaDriver;
+//import org.openqa.selenium.opera.OperaDriver;
 import org.openqa.selenium.remote.DesiredCapabilities;
 import org.openqa.selenium.remote.RemoteWebDriver;
 import org.openqa.selenium.safari.SafariDriver;
+import org.openqa.selenium.safari.SafariOptions;
 import org.openqa.selenium.support.ui.ExpectedCondition;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.Select;
 import org.openqa.selenium.support.ui.WebDriverWait;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import be.nabu.glue.api.ExecutionContext;
 import be.nabu.glue.api.MethodDescription;
 import be.nabu.glue.api.ParameterDescription;
 import be.nabu.glue.core.api.MethodProvider;
+import be.nabu.glue.core.impl.methods.FileMethods;
+import be.nabu.glue.core.impl.methods.GlueAttachmentImpl;
 import be.nabu.glue.core.impl.methods.ScriptMethods;
 import be.nabu.glue.core.impl.methods.TestMethods;
 import be.nabu.glue.impl.SimpleMethodDescription;
@@ -75,6 +95,9 @@ import be.nabu.libs.types.api.ComplexType;
 import be.nabu.libs.types.binding.api.Window;
 import be.nabu.libs.types.binding.json.JSONBinding;
 import be.nabu.libs.types.java.BeanResolver;
+import be.nabu.utils.codec.TranscoderUtils;
+import be.nabu.utils.codec.impl.Base64Decoder;
+import be.nabu.utils.io.IOUtils;
 
 /**
  * To run it remotely, I first tried the root URL: http://my-server:4444
@@ -89,12 +112,17 @@ import be.nabu.libs.types.java.BeanResolver;
  * 			http://my-server:4444/wd/hub
  * 
  * It takes a while to do the initial connect but after that it's fast.
- * 
  * Note that the reference documentation is available at http://release.seleniumhq.org/selenium-core/1.0.1/reference.html
+ * Interesting link (2023): https://www.selenium.dev/documentation/webdriver/actions_api/mouse/
  */
 @MethodProviderClass(namespace = "selenium")
 public class SeleneseMethodProvider implements MethodProvider {
-
+	
+	private static Logger logger = LoggerFactory.getLogger(SeleneseMethodProvider.class);
+	
+	private static Boolean screenshotInsteadOfVideo = Boolean.parseBoolean(System.getProperty("selenium.screenshotSteps", "true"));
+	private static Boolean screenshotAfter = Boolean.parseBoolean(System.getProperty("selenium.screenshotAfter", "true"));
+	
 	@Override
 	public Operation<ExecutionContext> resolve(String name) {
 		if (name.equalsIgnoreCase("selenese") || name.equalsIgnoreCase("selenium.selenese")) {
@@ -103,21 +131,29 @@ public class SeleneseMethodProvider implements MethodProvider {
 		else if (name.equalsIgnoreCase("webdriver") || name.equalsIgnoreCase("selenium.webdriver")) {
 			return new WebDriverOperation();
 		}
+		else if (name.equalsIgnoreCase("recording") || name.equalsIgnoreCase("selenium.recording")) {
+			SeleneseStepOperation seleneseStepOperation = new SeleneseStepOperation(name.substring("selenium.".length()));
+			seleneseStepOperation.setRecord(false);
+			return seleneseStepOperation;
+		}
 		// perform an action on a driver, e.g. selenium.click(driver, ...)
 		else if (name.matches("^selenium\\.[\\w]+$")) {
 			return new SeleneseStepOperation(name.substring("selenium.".length()));
 		}
+		
 		return null;
 	}
 	
 	public static class WrappedDriver implements Closeable {
 		
 		private WebDriver driver;
-		private Closeable[] closeables;
+		private List<Closeable> closeables = new ArrayList<Closeable>();
 		
 		public WrappedDriver(WebDriver driver, Closeable...closeables) {
 			this.driver = driver;
-			this.closeables = closeables;
+			if (closeables != null) {
+				this.closeables.addAll(Arrays.asList(closeables));
+			}
 		}
 
 		public WebDriver getDriver() {
@@ -156,7 +192,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			// do nothing
 		}
 
-		@SuppressWarnings({ "rawtypes", "unchecked" })
+		@SuppressWarnings({ "rawtypes", "unchecked", "resource" })
 		@Override
 		public Object evaluate(ExecutionContext context) throws EvaluationException {
 			List arguments = new ArrayList();
@@ -174,7 +210,12 @@ public class SeleneseMethodProvider implements MethodProvider {
 				browser = browser.substring(0, browser.length() - "-headless".length());
 			}
 			try {
-				return new WrappedDriver(getDriver(browser, language, url, headless));
+				WrappedDriver wrappedDriver = new WrappedDriver(getDriver(browser, language, url, headless));
+				Closeable recordSession = recordSession(wrappedDriver.getDriver());
+				if (recordSession != null) {
+					wrappedDriver.closeables.add(recordSession);
+				}
+				return wrappedDriver;
 			}
 			catch (Exception e) {
 				throw new EvaluationException(e);
@@ -189,6 +230,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 		public SeleneseStepOperation(String action) {
 			this.action = action;
 		}
+		
+		private boolean record = true;
 		
 		@SuppressWarnings({ "rawtypes", "unchecked" })
 		@Override
@@ -206,6 +249,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 			}
 			WebDriver driver = arguments.get(0) instanceof WebDriver ? (WebDriver) arguments.get(0) : ((WrappedDriver) arguments.get(0)).getDriver();
 			SeleneseTestCase testCase = new SeleneseTestCase();
+			testCase.setRecord(record);
 			SeleneseStep step = new SeleneseStep();
 			step.setCommand(action);
 			if (arguments.size() >= 2) {
@@ -223,13 +267,24 @@ public class SeleneseMethodProvider implements MethodProvider {
 				throw new EvaluationException(e);
 			}
 		}
+
+		public boolean isRecord() {
+			return record;
+		}
+
+		public void setRecord(boolean record) {
+			this.record = record;
+		}
+		
 	}
 	
 	public static class SeleneseOperation extends BaseMethodOperation<ExecutionContext> {
 
 		private boolean workaroundForClear = false;
 		
-		private long timeout = 10000, sleep, maxWait;
+		// wait at least a little bit so we can get good screenshots...
+		// we want to take good screenshots
+		private long timeout = 10000, sleep = 50, maxWait;
 		
 		private List<File> temporaryFiles = new ArrayList<File>();
 		
@@ -251,7 +306,14 @@ public class SeleneseMethodProvider implements MethodProvider {
 			}
 			InputStream json = null;
 			if (arguments.get(1) instanceof String) {
-				json = find((String) arguments.get(1));
+				String seleneseArgument = (String) arguments.get(1);
+				// it _is_ the json
+				if (seleneseArgument.trim().startsWith("{")) {
+					json = new ByteArrayInputStream(seleneseArgument.getBytes(Charset.forName("UTF-8")));
+				}
+				else {
+					json = find((String) arguments.get(1));
+				}
 			}
 			else if (arguments.get(1) instanceof byte[]) {
 				json = new ByteArrayInputStream((byte []) arguments.get(1));
@@ -315,6 +377,10 @@ public class SeleneseMethodProvider implements MethodProvider {
 			try {
 				String lastComment = null;
 				for (SeleneseStep step : testCase.getCommands()) {
+					WebDriverRecorder recorder = (WebDriverRecorder) ScriptRuntime.getRuntime().getContext().get("selenium-screen-recorder");
+					if (recorder != null && testCase.isRecord()) {
+						recorder.screenshot(driver, step.getId(), "before");
+					}
 					try {
 						if (ScriptRuntime.getRuntime().isAborted()) {
 							break;
@@ -341,6 +407,14 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 						if (step.getCommand().equalsIgnoreCase("open")) {
 							driver.get(step.getTarget().matches("^http[s]*://.*") ? step.getTarget() : baseURL + step.getTarget());
+						}
+						else if (step.getCommand().equalsIgnoreCase("recording")) {
+							if (recorder != null) {
+								byte[] recording = recorder.getRecording(false);
+								if (recording != null && recording.length > 0) {
+									be.nabu.glue.core.impl.methods.v2.ScriptMethods.attach("selenium-screen-recording.mp4", recording, "video/mp4");
+								}
+							}
 						}
 						else if (step.getCommand().equalsIgnoreCase("pause")) {
 							if (step.getTarget() != null && step.getTarget().matches("[0-9]+")) {
@@ -454,7 +528,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 						else if (step.getCommand().equalsIgnoreCase("selectWindow")) {
 							if (previousStep != null && previousStep.getCommand().equalsIgnoreCase("waitForPopup")) {
-								WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
+								WebDriverWait wait = new WebDriverWait(driver, Duration.ofMillis(this.timeout));
 								wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(step.getTarget()));
 							}
 							else {
@@ -465,6 +539,12 @@ public class SeleneseMethodProvider implements MethodProvider {
 							Alert alert = driver.switchTo().alert();
 							if (alert.getText().equals(step.getTarget())) {
 								alert.accept();
+							}
+						}
+						else if (step.getCommand().equalsIgnoreCase("setWindowSize")) {
+							if (step.getTarget() != null) {
+								String[] split = step.getTarget().split("[\\s]*x[\\s]*");
+								driver.manage().window().setSize(new Dimension(Integer.parseInt(split[0]), Integer.parseInt(split[1])));
 							}
 						}
 						else {
@@ -523,7 +603,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 								boolean succeeded = false;
 								while (!succeeded && new Date().getTime() - waitStart.getTime() < this.timeout) {
 									ExpectedCondition<?> presenceOfElementLocated = ExpectedConditions.presenceOfElementLocated(by);
-									WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
+									WebDriverWait wait = new WebDriverWait(driver, Duration.ofMillis(this.timeout));
 									wait.until(presenceOfElementLocated);
 									try {
 										WebElement element = driver.findElement(by);
@@ -559,7 +639,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 								}
 								if (presenceOfElementLocated != null) {
 									try {
-										WebDriverWait wait = new WebDriverWait(driver, this.timeout / 1000);
+										WebDriverWait wait = new WebDriverWait(driver, Duration.ofMillis(this.timeout));
 										wait.until(presenceOfElementLocated);
 									}
 									catch (TimeoutException e) {
@@ -745,6 +825,26 @@ public class SeleneseMethodProvider implements MethodProvider {
 											}
 										}
 									}
+									else if (step.getCommand().equalsIgnoreCase("mouseOver")) {
+										Actions action = new Actions(driver);
+										String [] parts = step.getValue().trim().isEmpty() ? new String[0] : step.getValue().split(",");
+										action.moveToElement(element, parts.length > 0 ? new Integer(parts[0]) : 0, parts.length > 1 ? new Integer(parts[1]) : 0).perform();
+									}
+									else if (step.getCommand().equalsIgnoreCase("mouseDownAt")) {
+										Actions action = new Actions(driver);
+										String [] parts = step.getValue().trim().isEmpty() ? new String[0] : step.getValue().split(",");
+										action.moveToElement(element, parts.length > 0 ? new Integer(parts[0]) : 0, parts.length > 1 ? new Integer(parts[1]) : 0).clickAndHold().perform();
+									}
+									else if (step.getCommand().equalsIgnoreCase("mouseMoveAt")) {
+										Actions action = new Actions(driver);
+										String [] parts = step.getValue().trim().isEmpty() ? new String[0] : step.getValue().split(",");
+										action.moveToElement(element, parts.length > 0 ? new Integer(parts[0]) : 0, parts.length > 1 ? new Integer(parts[1]) : 0).perform();
+									}
+									else if (step.getCommand().equalsIgnoreCase("mouseUpAt")) {
+										Actions action = new Actions(driver);
+										String [] parts = step.getValue().trim().isEmpty() ? new String[0] : step.getValue().split(",");
+										action.moveToElement(element, parts.length > 0 ? new Integer(parts[0]) : 0, parts.length > 1 ? new Integer(parts[1]) : 0).release().perform();
+									}
 									else {
 										throw new EvaluationException("Unknown selenium command: " + step.getCommand());
 									}
@@ -752,6 +852,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 							}
 						}
 						previousStep = step;
+						if (recorder != null && testCase.isRecord() && screenshotAfter) {
+							recorder.screenshot(driver, step.getId(), "after");
+						}
 						if (sleep > 0) {
 							try {
 								Thread.sleep(sleep);
@@ -762,6 +865,10 @@ public class SeleneseMethodProvider implements MethodProvider {
 						}
 					}
 					catch (Exception e) {
+						// we definitely want a screenshot in this case to see why it may have failed
+						if (recorder != null) {
+							recorder.screenshot(driver, step.getId(), "after");
+						}
 						throw new EvaluationException("Failed to execute step: " + step, e);
 					}
 				}
@@ -845,6 +952,7 @@ public class SeleneseMethodProvider implements MethodProvider {
 	public static class SeleneseTestCase {
 		private List<SeleneseStep> commands = new ArrayList<SeleneseStep>();
 		private String name, id;
+		private boolean record = true;
 
 		public List<SeleneseStep> getCommands() {
 			return commands;
@@ -868,6 +976,14 @@ public class SeleneseMethodProvider implements MethodProvider {
 
 		public void setId(String id) {
 			this.id = id;
+		}
+
+		public boolean isRecord() {
+			return record;
+		}
+
+		public void setRecord(boolean record) {
+			this.record = record;
 		}
 	}
 	
@@ -932,16 +1048,18 @@ public class SeleneseMethodProvider implements MethodProvider {
 				new SimpleParameterDescription("language", "If you have passed in the name of the browser as the second parameter, you can optionally pass in a language setting as well", "String")
 			}),
 			new ArrayList<ParameterDescription>()));
+		descriptions.add(new SimpleMethodDescription("selenium", "recording", "Returns the recording in bytes (if available).",
+				Arrays.asList(new ParameterDescription [] { 
+					new SimpleParameterDescription("browser", "You can pass in the name of the target browser (e.g. firefox) as the second parameter", "WebDriver, String"),
+					new SimpleParameterDescription("language", "If you have passed in the name of the browser as the second parameter, you can optionally pass in a language setting as well", "String")
+				}),
+				new ArrayList<ParameterDescription>()));
 		return descriptions;
 	}
 	
 	private static DesiredCapabilities getSafariCapabilities(String language) {
-		DesiredCapabilities capabilities = DesiredCapabilities.safari();
-		return capabilities;
-	}
-	
-	private static DesiredCapabilities getOperaCapabilities(String language) {
-		DesiredCapabilities capabilities = DesiredCapabilities.operaBlink();
+//		DesiredCapabilities capabilities = DesiredCapabilities.safari();
+		DesiredCapabilities capabilities = new DesiredCapabilities();
 		return capabilities;
 	}
 	
@@ -971,38 +1089,35 @@ public class SeleneseMethodProvider implements MethodProvider {
 	}
 	
 	private static DesiredCapabilities getFirefoxCapabilities(String language) {
-		DesiredCapabilities capabilities = DesiredCapabilities.firefox();
-		capabilities.setCapability(FirefoxDriver.PROFILE, getFirefoxProfile(language));
+		DesiredCapabilities capabilities = new DesiredCapabilities();	// DesiredCapabilities.firefox()
+//		capabilities.setCapability(FirefoxDriver.PROFILE, getFirefoxProfile(language));
 		capabilities.setCapability("marionette", true);
 		return capabilities;
 	}
 
-	private static DesiredCapabilities getEdgeCapabilities(String language) {
-		DesiredCapabilities edge = DesiredCapabilities.edge();
-		return edge;
-	}
-	
 	private static WebDriver getEdgeDriver(String language, boolean headless) {
-		WebDriverManager.edgedriver().setup();
-		return new EdgeDriver(getEdgeCapabilities(language));
+//		WebDriverManager.edgedriver().setup();
+		EdgeOptions options = new EdgeOptions();
+		return new EdgeDriver(options);
 	}
 	
 	private static WebDriver getFirefoxDriver(String language, boolean headless) {
-		WebDriverManager.firefoxdriver().setup();
+//		WebDriverManager.firefoxdriver().setup();
 		return new FirefoxDriver(getFirefoxOptions(language, headless));
 	}
 	
 	private static WebDriver getSafariDriver(String language, boolean headless) {
-		return new SafariDriver(getSafariCapabilities(language));
+		SafariOptions safariOptions = new SafariOptions();
+		return new SafariDriver(safariOptions);
 	}
 	
-	private static WebDriver getOperaDriver(String language, boolean headless) {
-		WebDriverManager.operadriver().setup();
-		return new OperaDriver(getOperaCapabilities(language));
-	}
-	
+//	private static WebDriver getOperaDriver(String language, boolean headless) {
+//		WebDriverManager.operadriver().setup();
+//		return new OperaDriver(getOperaCapabilities(language));
+//	}
+//	
 	private static WebDriver getChromeDriver(String language, boolean headless) {
-		WebDriverManager.chromedriver().setup();
+//		WebDriverManager.chromedriver().setup();
 		// if the system property is not set but you have it configured in the glue properties, push it to the system properties
 		if (System.getProperty("webdriver.chrome.driver") == null && ScriptMethods.environment("webdriver.chrome.driver") != null) {
 			System.setProperty("webdriver.chrome.driver", ScriptMethods.environment("webdriver.chrome.driver"));
@@ -1010,17 +1125,154 @@ public class SeleneseMethodProvider implements MethodProvider {
 		return new ChromeDriver(getChromeOptions(language, headless));
 	}
 	
-	private static WebDriver getInternetExplorerDriver(String language, boolean headless) {
-		WebDriverManager.iedriver().setup();
-		return new InternetExplorerDriver(getInternetExplorerCapabilities(language));
-	}
+	public static class WebDriverRecorder implements Closeable {
+		
+		private byte [] recording = null;
+		private List<byte[]> images = new ArrayList<byte[]>();
+		private Path directory;
+		private int counter = 10000;
+		
+		private String getPath() {
+			return directory.toFile().getAbsolutePath();
+		}
+		
+		public void screenshot(WebDriver driver, String stepId, String suffix) {
+			if (directory != null) {
+				byte [] screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
+				try {
+					if (screenshotInsteadOfVideo) {
+						be.nabu.glue.core.impl.methods.v2.ScriptMethods.attach("selenium-screenshot-" + stepId + "-" + suffix + ".png", screenshot, "image/png");
+					}
+					else {
+						FileMethods.write(getPath() + "/" + counter++ + "-screenshot.png", screenshot);
+					}
+				}
+				catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			}
+		}
 
-	private static DesiredCapabilities getInternetExplorerCapabilities(String language) {
-		DesiredCapabilities capabilities = DesiredCapabilities.internetExplorer();
-		return capabilities;
+		private void start(WebDriver driver) throws IOException {
+			directory = Files.createTempDirectory("screen-recorder");
+			if (driver instanceof ChromeDriver && !screenshotInsteadOfVideo) {
+				DevTools devTools = ((ChromeDriver) driver).getDevTools();
+				try {
+					devTools.createSession();
+					Optional<Integer> maxWidth = Optional.ofNullable(null);
+					Optional<Integer> maxHeight = Optional.ofNullable(null);
+					Optional<Integer> everyNthFrame = Optional.ofNullable(1);
+					devTools.send(Page.startScreencast(Optional.of(StartScreencastFormat.PNG), Optional.of(100), maxWidth, maxHeight, everyNthFrame));
+					
+					devTools.addListener(Page.screencastFrame(), new Consumer<ScreencastFrame>() {
+						@Override
+						public void accept(ScreencastFrame frame) {
+							String base64Image = frame.getData();
+							try {
+								byte[] bytes = IOUtils.toBytes(TranscoderUtils.transcodeBytes(IOUtils.wrap(base64Image.getBytes("ASCII"), true), new Base64Decoder()));
+								FileMethods.write(getPath() + "/" + counter++ + "-screenshot.png", bytes);
+							}
+							catch (Exception e) {
+								e.printStackTrace();
+							}
+							Page.screencastFrameAck(frame.getSessionId());
+						}
+					});
+				}
+				catch (Exception e) {
+					logger.error("Could not record session", e);
+				}
+			}
+			logger.info("Using directory for screen recording: " + getPath());
+			ScriptRuntime.getRuntime().getContext().put("selenium-screen-recorder", this);
+		}
+
+		@Override
+		public void close() throws IOException {
+			cleanup();
+		}
+		
+		public byte [] getRecording(boolean force) throws IOException {
+			if (this.recording == null || force) {
+				this.finalizeRecording();
+				if (directory != null) {
+					File file = new File(getPath(), "result.mp4");
+					if (file.exists()) {
+						try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+							this.recording = IOUtils.toBytes(IOUtils.wrap(input));
+						}
+					}
+				}
+			}
+			return this.recording;
+		}
+
+		public void cleanup() {
+			if (directory != null) {
+				File file = new File(getPath());
+				if (file.isDirectory()) {
+					for (File child : file.listFiles()) {
+						child.delete();
+					}
+					file.delete();
+				}
+				directory = null;
+			}
+		}
+		
+		public void finalizeRecording() {
+			if (directory != null && !screenshotInsteadOfVideo) {
+				try {
+					// use ffmpeg to generate a video from the images
+					ProcessBuilder processBuilder = new ProcessBuilder(
+						"ffmpeg", 
+						"-y",
+						"-r", "25",
+						// this slows the recording down!
+						"-vf", "setpts=15*PTS",
+						//        			"-pix_fmt", "argb",
+						//        			"-s", "1395x727",
+						//        			"-c:v", "libx264",
+						"-f", "mp4", getPath() + "/result.mp4", 
+						//"-i", "-" // can also write "pipe:"
+						//        			"-i", "/tmp/test"
+						"-pattern_type", "glob", "-i", getPath() + "/*.png"
+					);
+					
+					processBuilder.redirectErrorStream(false);
+					Process process = processBuilder.start();
+					process.waitFor();
+				}
+				catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		public List<byte[]> getImages() {
+			return images;
+		}
 	}
 	
+	private static Closeable recordSession(WebDriver driver) {
+		WebDriverRecorder recorder = new WebDriverRecorder();
+		try {
+			recorder.start(driver);
+		}
+		catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+		return recorder;
+	}
+	
+	private static WebDriver getInternetExplorerDriver(String language, boolean headless) {
+//		WebDriverManager.iedriver().setup();
+		InternetExplorerOptions options = new InternetExplorerOptions();
+		return new InternetExplorerDriver(options);
+	}
+
 	private static ChromeOptions getChromeOptions(String language, boolean headless) {
+//		WebDriverManager.chromiumdriver().setup();
 		ChromeOptions options = new ChromeOptions();
 		options.setHeadless(headless);
 		if (language != null) {
@@ -1039,7 +1291,8 @@ public class SeleneseMethodProvider implements MethodProvider {
 	}
 	
 	private static DesiredCapabilities getChromeCapabilities(String language) {
-		DesiredCapabilities capabilities = DesiredCapabilities.chrome();
+//		DesiredCapabilities capabilities = DesiredCapabilities.chrome();
+		DesiredCapabilities capabilities = new DesiredCapabilities();
 		capabilities.setCapability(ChromeOptions.CAPABILITY, getChromeOptions(language, false));
 		return capabilities;
 	}
@@ -1067,9 +1320,9 @@ public class SeleneseMethodProvider implements MethodProvider {
 			else if (browser != null && (browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
 				return getInternetExplorerDriver(language, headless);
 			}
-			else if (browser != null && browser.equalsIgnoreCase("opera")) {
-				return getOperaDriver(language, headless);
-			}
+//			else if (browser != null && browser.equalsIgnoreCase("opera")) {
+//				return getOperaDriver(language, headless);
+//			}
 			else if (browser != null && browser.equalsIgnoreCase("safari")) {
 				return getSafariDriver(language, headless);
 			}
@@ -1081,15 +1334,15 @@ public class SeleneseMethodProvider implements MethodProvider {
 			if (browser != null && (browser.equalsIgnoreCase("chrome") || browser.equalsIgnoreCase("chromium"))) {
 				return getRemoteDriver(new URL(url), getChromeCapabilities(language));
 			}
-			else if (browser != null && browser.toLowerCase().equals("edge")) {
-				return getRemoteDriver(new URL(url), getEdgeCapabilities(language));
-			}
-			else if (browser != null && (browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
-				return getRemoteDriver(new URL(url), getInternetExplorerCapabilities(language));
-			}
-			else if (browser != null && browser.equalsIgnoreCase("opera")) {
-				return getRemoteDriver(new URL(url), getOperaCapabilities(language));
-			}
+//			else if (browser != null && browser.toLowerCase().equals("edge")) {
+//				return getRemoteDriver(new URL(url), getEdgeCapabilities(language));
+//			}
+//			else if (browser != null && (browser.equalsIgnoreCase("explorer") || browser.equals("internet explorer"))) {
+//				return getRemoteDriver(new URL(url), getInternetExplorerCapabilities(language));
+//			}
+//			else if (browser != null && browser.equalsIgnoreCase("opera")) {
+//				return getRemoteDriver(new URL(url), getOperaCapabilities(language));
+//			}
 			else if (browser != null && browser.equalsIgnoreCase("safari")) {
 				return getRemoteDriver(new URL(url), getSafariCapabilities(language));
 			}
